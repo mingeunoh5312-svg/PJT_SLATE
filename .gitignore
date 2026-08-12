@@ -1,0 +1,42 @@
+# ===== Secrets / env =====
+.env
+.env.*
+!.env.example
+!.env.production.example
+backend/src/main/resources/application-local.yml
+
+# ===== Backend (Maven / Spring) =====
+backend/target/
+backend/.classpath
+backend/.project
+backend/.settings/
+backend/.factorypath
+uploads/
+
+# ===== Frontend (Node / Vite) =====
+frontend/node_modules/
+frontend/dist/
+frontend/*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== IDE / Editor =====
+.idea/
+*.iml
+.vscode/
+.project
+.settings/
+/.metadata/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== Logs / work artifacts =====
+work_logs/*.log
+work_logs/screenshots/
+
+# ===== Archives (build outputs, data dumps) =====
+*.zip
