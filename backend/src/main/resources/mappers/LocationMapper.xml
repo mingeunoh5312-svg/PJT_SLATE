@@ -1,0 +1,407 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.locations.LocationMapper">
+
+  <sql id="locationColumns">
+    l.location_id AS locationId,
+    l.source_location_id AS sourceLocationId,
+    l.source_variant_no AS sourceVariantNo,
+    l.place_name AS placeName,
+    l.sido,
+    l.sigungu,
+    l.lot_address AS lotAddress,
+    l.road_address AS roadAddress,
+    l.latitude,
+    l.longitude,
+    l.source_conflict_yn AS sourceConflictYn,
+    l.quality_flags_json AS qualityFlagsJson,
+    l.search_text AS searchText,
+    l.active_yn AS activeYn
+  </sql>
+
+  <sql id="candidateColumns">
+    c.candidate_id AS candidateId,
+    c.user_id AS userId,
+    saver.nickname AS savedByNickname,
+    c.team_id AS teamId,
+    (SELECT t.name FROM team t WHERE t.team_id = c.team_id) AS teamName,
+    c.location_id AS locationId,
+    c.session_id AS sessionId,
+    c.recommendation_id AS recommendationId,
+    c.title,
+    c.memo,
+    c.status,
+    c.source_type AS sourceType,
+    c.created_at AS createdAt,
+    c.updated_at AS updatedAt,
+    l.place_name AS placeName,
+    l.sido,
+    l.sigungu,
+    l.lot_address AS lotAddress,
+    l.road_address AS roadAddress,
+    l.latitude,
+    l.longitude,
+    l.quality_flags_json AS qualityFlagsJson,
+    s.context_type AS contextType,
+    s.prompt AS sessionPrompt,
+    r.rank_no AS rankNo,
+    r.score,
+    r.ai_summary AS aiSummary,
+    r.match_reason AS matchReason,
+    r.usage_idea AS usageIdea,
+    r.recommendation_basis AS recommendationBasis,
+    r.fallback_yn AS fallbackYn
+  </sql>
+
+  <select id="selectCandidateLocations" resultType="map">
+    SELECT
+      <include refid="locationColumns" />,
+      COUNT(h.history_id) AS historyCount,
+      SUM(CASE WHEN h.scene_description IS NOT NULL AND h.scene_description != '' THEN 1 ELSE 0 END) AS sceneDescriptionCount,
+      MAX(h.created_at) AS latestHistoryAt
+    FROM shooting_location l
+    LEFT JOIN shooting_location_history h ON h.location_id = l.location_id
+    WHERE l.active_yn = 'Y'
+      <if test="sido != null and sido != ''">
+        AND l.sido = #{sido}
+      </if>
+      <if test="sigungu != null and sigungu != ''">
+        AND l.sigungu = #{sigungu}
+      </if>
+      <if test="keywords != null and keywords.size > 0">
+        AND (
+          <foreach collection="keywords" item="keyword" separator=" OR ">
+            (
+              l.place_name LIKE CONCAT('%', #{keyword}, '%')
+              OR l.sido LIKE CONCAT('%', #{keyword}, '%')
+              OR l.sigungu LIKE CONCAT('%', #{keyword}, '%')
+              OR l.lot_address LIKE CONCAT('%', #{keyword}, '%')
+              OR l.road_address LIKE CONCAT('%', #{keyword}, '%')
+              OR l.search_text LIKE CONCAT('%', #{keyword}, '%')
+              OR EXISTS (
+                SELECT 1
+                FROM shooting_location_history kh
+                WHERE kh.location_id = l.location_id
+                  AND (
+                    kh.movie_title LIKE CONCAT('%', #{keyword}, '%')
+                    OR kh.scene_description LIKE CONCAT('%', #{keyword}, '%')
+                  )
+              )
+            )
+          </foreach>
+        )
+      </if>
+    GROUP BY l.location_id
+    ORDER BY
+      CASE WHEN l.road_address IS NOT NULL AND l.road_address != '' THEN 1 ELSE 0 END DESC,
+      CASE WHEN l.lot_address IS NOT NULL AND l.lot_address != '' THEN 1 ELSE 0 END DESC,
+      COUNT(h.history_id) DESC,
+      SUM(CASE WHEN h.scene_description IS NOT NULL AND h.scene_description != '' THEN 1 ELSE 0 END) DESC,
+      l.location_id
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectCandidateLocationsByRegions" resultType="map">
+    SELECT
+      <include refid="locationColumns" />,
+      COUNT(h.history_id) AS historyCount,
+      SUM(CASE WHEN h.scene_description IS NOT NULL AND h.scene_description != '' THEN 1 ELSE 0 END) AS sceneDescriptionCount,
+      MAX(h.created_at) AS latestHistoryAt
+    FROM shooting_location l
+    LEFT JOIN shooting_location_history h ON h.location_id = l.location_id
+    WHERE l.active_yn = 'Y'
+      <if test="(sidos != null and sidos.size > 0) or (regions != null and regions.size > 0)">
+        <trim prefix="AND (" suffix=")" prefixOverrides="OR">
+          <if test="sidos != null and sidos.size > 0">
+            OR l.sido IN
+            <foreach collection="sidos" item="sido" open="(" separator="," close=")">
+              #{sido}
+            </foreach>
+          </if>
+          <if test="regions != null and regions.size > 0">
+            OR
+            <foreach collection="regions" item="region" separator=" OR ">
+              <choose>
+                <when test="region.sido != null and region.sido != '' and region.sigungu != null and region.sigungu != ''">
+                  (l.sido = #{region.sido} AND l.sigungu = #{region.sigungu})
+                </when>
+                <when test="region.sido != null and region.sido != ''">
+                  l.sido = #{region.sido}
+                </when>
+                <otherwise>
+                  l.sigungu = #{region.sigungu}
+                </otherwise>
+              </choose>
+            </foreach>
+          </if>
+        </trim>
+      </if>
+      <if test="keywords != null and keywords.size > 0">
+        AND (
+          <foreach collection="keywords" item="keyword" separator=" OR ">
+            (
+              l.place_name LIKE CONCAT('%', #{keyword}, '%')
+              OR l.sido LIKE CONCAT('%', #{keyword}, '%')
+              OR l.sigungu LIKE CONCAT('%', #{keyword}, '%')
+              OR l.lot_address LIKE CONCAT('%', #{keyword}, '%')
+              OR l.road_address LIKE CONCAT('%', #{keyword}, '%')
+              OR l.search_text LIKE CONCAT('%', #{keyword}, '%')
+              OR EXISTS (
+                SELECT 1
+                FROM shooting_location_history kh
+                WHERE kh.location_id = l.location_id
+                  AND (
+                    kh.movie_title LIKE CONCAT('%', #{keyword}, '%')
+                    OR kh.scene_description LIKE CONCAT('%', #{keyword}, '%')
+                  )
+              )
+            )
+          </foreach>
+        )
+      </if>
+    GROUP BY l.location_id
+    ORDER BY
+      CASE WHEN l.road_address IS NOT NULL AND l.road_address != '' THEN 1 ELSE 0 END DESC,
+      CASE WHEN l.lot_address IS NOT NULL AND l.lot_address != '' THEN 1 ELSE 0 END DESC,
+      COUNT(h.history_id) DESC,
+      SUM(CASE WHEN h.scene_description IS NOT NULL AND h.scene_description != '' THEN 1 ELSE 0 END) DESC,
+      l.location_id
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectCandidateSidos" resultType="string">
+    SELECT DISTINCT l.sido
+    FROM shooting_location l
+    WHERE l.active_yn = 'Y'
+      AND l.sido IS NOT NULL
+      AND l.sido != ''
+      <if test="keywords != null and keywords.size > 0">
+        AND (
+          <foreach collection="keywords" item="keyword" separator=" OR ">
+            (
+              l.place_name LIKE CONCAT('%', #{keyword}, '%')
+              OR l.sido LIKE CONCAT('%', #{keyword}, '%')
+              OR l.sigungu LIKE CONCAT('%', #{keyword}, '%')
+              OR l.lot_address LIKE CONCAT('%', #{keyword}, '%')
+              OR l.road_address LIKE CONCAT('%', #{keyword}, '%')
+              OR l.search_text LIKE CONCAT('%', #{keyword}, '%')
+              OR EXISTS (
+                SELECT 1
+                FROM shooting_location_history kh
+                WHERE kh.location_id = l.location_id
+                  AND (
+                    kh.movie_title LIKE CONCAT('%', #{keyword}, '%')
+                    OR kh.scene_description LIKE CONCAT('%', #{keyword}, '%')
+                  )
+              )
+            )
+          </foreach>
+        )
+      </if>
+    ORDER BY l.sido
+  </select>
+
+  <select id="selectLocationById" resultType="map">
+    SELECT <include refid="locationColumns" />
+    FROM shooting_location l
+    WHERE l.location_id = #{locationId}
+      AND l.active_yn = 'Y'
+  </select>
+
+  <select id="selectRepresentativeHistories" resultType="map">
+    SELECT
+      h.history_id AS historyId,
+      h.location_id AS locationId,
+      h.source_event_id AS sourceEventId,
+      h.movie_code AS movieCode,
+      h.movie_title AS movieTitle,
+      h.production_year AS productionYear,
+      h.scene_description AS sceneDescription,
+      h.characters,
+      h.source_name AS sourceName,
+      h.source_url AS sourceUrl
+    FROM shooting_location_history h
+    WHERE h.location_id = #{locationId}
+    ORDER BY
+      CASE
+        WHEN h.scene_description LIKE '%폐업%'
+          OR h.scene_description LIKE '%영업 종료%'
+          OR h.scene_description LIKE '%영업종료%'
+          OR h.scene_description LIKE '%철거%'
+          OR h.scene_description LIKE '%멸실%'
+          OR h.scene_description LIKE '%현재 없음%'
+          OR h.scene_description LIKE '%공터%'
+        THEN 1 ELSE 0
+      END,
+      CASE WHEN h.scene_description IS NOT NULL AND h.scene_description != '' THEN 0 ELSE 1 END,
+      h.production_year DESC,
+      h.history_id DESC
+    LIMIT #{limit}
+  </select>
+
+  <insert id="insertSearchSession" parameterType="map" useGeneratedKeys="true" keyProperty="sessionId">
+    INSERT INTO location_search_session (
+      user_id, team_id, prompt, context_type, parsed_conditions_json,
+      candidate_count, recommendation_count, status, failure_reason, created_at
+    ) VALUES (
+      #{userId}, #{teamId}, #{prompt}, #{contextType}, #{parsedConditionsJson},
+      #{candidateCount}, #{recommendationCount}, #{status}, #{failureReason}, NOW()
+    )
+  </insert>
+
+  <update id="updateSearchSessionStatus">
+    UPDATE location_search_session
+    SET status = #{status},
+        candidate_count = #{candidateCount},
+        recommendation_count = #{recommendationCount},
+        failure_reason = #{failureReason}
+    WHERE session_id = #{sessionId}
+  </update>
+
+  <insert id="insertRecommendationResult" parameterType="map" useGeneratedKeys="true" keyProperty="recommendationId">
+    INSERT INTO location_recommendation_result (
+      session_id, location_id, rank_no, score, ai_summary, match_reason,
+      usage_idea, recommendation_basis, check_points_json, model_name, fallback_yn, created_at
+    ) VALUES (
+      #{sessionId}, #{locationId}, #{rankNo}, #{score}, #{aiSummary}, #{matchReason},
+      #{usageIdea}, #{recommendationBasis}, #{checkPointsJson}, #{modelName}, #{fallbackYn}, NOW()
+    )
+  </insert>
+
+  <select id="selectSessionById" resultType="map">
+    SELECT
+      s.session_id AS sessionId,
+      s.user_id AS userId,
+      u.nickname AS userNickname,
+      s.team_id AS teamId,
+      t.name AS teamName,
+      s.prompt,
+      s.context_type AS contextType,
+      s.parsed_conditions_json AS parsedConditionsJson,
+      s.candidate_count AS candidateCount,
+      s.recommendation_count AS recommendationCount,
+      s.status,
+      s.failure_reason AS failureReason,
+      s.created_at AS createdAt
+    FROM location_search_session s
+    JOIN user_account u ON u.user_id = s.user_id
+    LEFT JOIN team t ON t.team_id = s.team_id
+    WHERE s.session_id = #{sessionId}
+  </select>
+
+  <select id="selectSessionRecommendations" resultType="map">
+    SELECT
+      r.recommendation_id AS recommendationId,
+      r.session_id AS sessionId,
+      r.location_id AS locationId,
+      r.rank_no AS rankNo,
+      r.score,
+      r.ai_summary AS aiSummary,
+      r.match_reason AS matchReason,
+      r.usage_idea AS usageIdea,
+      r.recommendation_basis AS recommendationBasis,
+      r.check_points_json AS checkPointsJson,
+      r.model_name AS modelName,
+      r.fallback_yn AS fallbackYn,
+      r.created_at AS createdAt,
+      l.place_name AS placeName,
+      l.sido,
+      l.sigungu,
+      l.lot_address AS lotAddress,
+      l.road_address AS roadAddress,
+      l.latitude,
+      l.longitude,
+      l.quality_flags_json AS qualityFlagsJson
+    FROM location_recommendation_result r
+    JOIN shooting_location l ON l.location_id = r.location_id
+    WHERE r.session_id = #{sessionId}
+    ORDER BY r.rank_no, r.recommendation_id
+  </select>
+
+  <select id="selectRecommendationById" resultType="map">
+    SELECT
+      r.recommendation_id AS recommendationId,
+      r.session_id AS sessionId,
+      r.location_id AS locationId,
+      r.rank_no AS rankNo,
+      r.score,
+      r.fallback_yn AS fallbackYn,
+      s.user_id AS userId,
+      s.team_id AS teamId
+    FROM location_recommendation_result r
+    JOIN location_search_session s ON s.session_id = r.session_id
+    WHERE r.recommendation_id = #{recommendationId}
+  </select>
+
+  <select id="selectActiveSavedCandidate" resultType="map">
+    SELECT <include refid="candidateColumns" />
+    FROM saved_location_candidate c
+    JOIN user_account saver ON saver.user_id = c.user_id
+    JOIN shooting_location l ON l.location_id = c.location_id
+    LEFT JOIN location_search_session s ON s.session_id = c.session_id
+    LEFT JOIN location_recommendation_result r ON r.recommendation_id = c.recommendation_id
+    WHERE c.user_id = #{userId}
+      AND c.location_id = #{locationId}
+      AND c.status = 'ACTIVE'
+      AND c.deleted_at IS NULL
+      <choose>
+        <when test="teamId != null">
+          AND c.team_id = #{teamId}
+        </when>
+        <otherwise>
+          AND c.team_id IS NULL
+        </otherwise>
+      </choose>
+    ORDER BY c.created_at DESC, c.candidate_id DESC
+    LIMIT 1
+  </select>
+
+  <insert id="insertSavedCandidate" parameterType="map" useGeneratedKeys="true" keyProperty="candidateId">
+    INSERT INTO saved_location_candidate (
+      user_id, team_id, location_id, session_id, recommendation_id,
+      title, memo, status, source_type, created_at
+    ) VALUES (
+      #{userId}, #{teamId}, #{locationId}, #{sessionId}, #{recommendationId},
+      #{title}, #{memo}, #{status}, #{sourceType}, NOW()
+    )
+  </insert>
+
+  <select id="selectSavedCandidateById" resultType="map">
+    SELECT <include refid="candidateColumns" />
+    FROM saved_location_candidate c
+    JOIN user_account saver ON saver.user_id = c.user_id
+    JOIN shooting_location l ON l.location_id = c.location_id
+    LEFT JOIN location_search_session s ON s.session_id = c.session_id
+    LEFT JOIN location_recommendation_result r ON r.recommendation_id = c.recommendation_id
+    WHERE c.candidate_id = #{candidateId}
+  </select>
+
+  <select id="selectPersonalCandidates" resultType="map">
+    SELECT <include refid="candidateColumns" />
+    FROM saved_location_candidate c
+    JOIN user_account saver ON saver.user_id = c.user_id
+    JOIN shooting_location l ON l.location_id = c.location_id
+    LEFT JOIN location_search_session s ON s.session_id = c.session_id
+    LEFT JOIN location_recommendation_result r ON r.recommendation_id = c.recommendation_id
+    WHERE c.user_id = #{userId}
+      AND c.status = 'ACTIVE'
+      AND c.deleted_at IS NULL
+    ORDER BY c.created_at DESC, c.candidate_id DESC
+  </select>
+
+  <select id="selectTeamCandidates" resultType="map">
+    SELECT <include refid="candidateColumns" />
+    FROM saved_location_candidate c
+    JOIN user_account saver ON saver.user_id = c.user_id
+    JOIN shooting_location l ON l.location_id = c.location_id
+    LEFT JOIN location_search_session s ON s.session_id = c.session_id
+    LEFT JOIN location_recommendation_result r ON r.recommendation_id = c.recommendation_id
+    WHERE c.team_id = #{teamId}
+      AND c.status = 'ACTIVE'
+      AND c.deleted_at IS NULL
+    ORDER BY c.created_at DESC, c.candidate_id DESC
+  </select>
+</mapper>

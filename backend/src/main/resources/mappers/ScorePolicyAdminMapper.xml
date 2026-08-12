@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.matching.ScorePolicyAdminMapper">
+
+  <select id="selectActivePolicy" resultType="map">
+    SELECT
+      policy_id AS policyId,
+      policy_name AS policyName,
+      status,
+      version,
+      description,
+      created_by AS createdBy,
+      updated_by AS updatedBy,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM matching_score_policy
+    WHERE status = 'ACTIVE'
+    ORDER BY version DESC, policy_id DESC
+    LIMIT 1
+  </select>
+
+  <select id="selectPolicyById" resultType="map">
+    SELECT
+      policy_id AS policyId,
+      policy_name AS policyName,
+      status,
+      version,
+      description,
+      created_by AS createdBy,
+      updated_by AS updatedBy,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM matching_score_policy
+    WHERE policy_id = #{policyId}
+  </select>
+
+  <select id="selectPolicyItems" resultType="map">
+    SELECT
+      policy_item_id AS policyItemId,
+      policy_id AS policyId,
+      score_group AS scoreGroup,
+      element_code AS elementCode,
+      display_name AS displayName,
+      weight,
+      sort_order AS sortOrder
+    FROM matching_score_policy_item
+    WHERE policy_id = #{policyId}
+      AND active_yn = 'Y'
+    ORDER BY score_group, sort_order
+  </select>
+
+  <update id="archiveActivePolicies">
+    UPDATE matching_score_policy
+    SET status = 'ARCHIVED',
+        updated_by = #{updatedBy},
+        updated_at = NOW()
+    WHERE status = 'ACTIVE'
+  </update>
+
+  <insert id="insertPolicy" parameterType="map" useGeneratedKeys="true" keyProperty="policyId">
+    INSERT INTO matching_score_policy (
+      policy_name, status, version, description, created_by, updated_by, created_at
+    ) VALUES (
+      #{policyName}, #{status}, #{version}, #{description,jdbcType=VARCHAR}, #{createdBy}, #{updatedBy}, NOW()
+    )
+  </insert>
+
+  <insert id="insertPolicyItem" parameterType="map">
+    INSERT INTO matching_score_policy_item (
+      policy_id, score_group, element_code, display_name, weight, sort_order, active_yn
+    ) VALUES (
+      #{policyId}, #{scoreGroup}, #{elementCode}, #{displayName}, #{weight}, #{sortOrder}, 'Y'
+    )
+  </insert>
+
+  <insert id="insertPolicyHistory">
+    INSERT INTO matching_score_policy_history (
+      policy_id, changed_by, before_json, after_json, change_reason, created_at
+    ) VALUES (
+      #{policyId}, #{changedBy}, #{beforeJson,jdbcType=VARCHAR}, #{afterJson,jdbcType=VARCHAR}, #{changeReason}, NOW()
+    )
+  </insert>
+
+  <select id="selectPolicyHistory" resultType="map">
+    SELECT
+      h.history_id AS historyId,
+      h.policy_id AS policyId,
+      p.policy_name AS policyName,
+      p.version,
+      h.changed_by AS changedBy,
+      u.email AS changedByEmail,
+      u.nickname AS changedByNickname,
+      CAST(h.before_json AS CHAR) AS beforeJson,
+      CAST(h.after_json AS CHAR) AS afterJson,
+      h.change_reason AS changeReason,
+      h.created_at AS createdAt
+    FROM matching_score_policy_history h
+    JOIN matching_score_policy p ON p.policy_id = h.policy_id
+    JOIN user_account u ON u.user_id = h.changed_by
+    ORDER BY h.created_at DESC, h.history_id DESC
+    LIMIT #{limit}
+  </select>
+</mapper>

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.references.ReferenceMapper">
+
+  <select id="selectCodes" resultType="map">
+    SELECT
+      cg.code_group AS codeGroup,
+      cg.group_name AS groupName,
+      c.code,
+      c.display_name AS displayName,
+      c.description,
+      c.sort_order AS sortOrder
+    FROM common_code_group cg
+    JOIN common_code c ON c.code_group = cg.code_group
+    WHERE cg.active_yn = 'Y'
+      AND c.active_yn = 'Y'
+      <if test="groups != null and groups.size() > 0">
+        AND cg.code_group IN
+        <foreach collection="groups" item="group" open="(" separator="," close=")">
+          #{group}
+        </foreach>
+      </if>
+    ORDER BY cg.code_group, c.sort_order, c.code
+  </select>
+
+  <select id="selectRegions" resultType="map">
+    SELECT
+      region_id AS regionId,
+      region_code AS regionCode,
+      sido_name AS sidoName,
+      sigungu_name AS sigunguName,
+      dong_name AS dongName,
+      center_lat AS centerLat,
+      center_lng AS centerLng,
+      public_display_name AS publicDisplayName
+    FROM region
+    WHERE active_yn = 'Y'
+      <if test="keyword != null and keyword != ''">
+        AND CONCAT_WS(' ', sido_name, sigungu_name, dong_name, public_display_name) LIKE CONCAT('%', #{keyword}, '%')
+      </if>
+    ORDER BY sido_name, sigungu_name, dong_name
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectRoles" resultType="map">
+    SELECT
+      rc.role_category_id AS roleCategoryId,
+      rc.name AS roleCategoryName,
+      rc.sort_order AS categorySortOrder,
+      r.role_id AS roleId,
+      r.name AS roleName,
+      r.sort_order AS roleSortOrder
+    FROM role_category rc
+    JOIN `role` r ON r.role_category_id = rc.role_category_id
+    WHERE rc.active_yn = 'Y'
+      AND r.active_yn = 'Y'
+    ORDER BY rc.sort_order, r.sort_order, r.role_id
+  </select>
+
+  <select id="selectGenres" resultType="map">
+    SELECT
+      genre_id AS genreId,
+      name,
+      description,
+      sort_order AS sortOrder
+    FROM genre
+    WHERE active_yn = 'Y'
+    ORDER BY sort_order, genre_id
+  </select>
+</mapper>

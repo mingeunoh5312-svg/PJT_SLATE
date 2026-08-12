@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.admin.AdminPermissionMapper">
+
+  <select id="selectActivePermissionCodes" resultType="string">
+    SELECT permission_code
+    FROM admin_permission
+    WHERE user_id = #{userId}
+      AND active_yn = 'Y'
+    ORDER BY permission_code
+  </select>
+
+  <select id="countActivePermission" resultType="int">
+    SELECT COUNT(*)
+    FROM admin_permission
+    WHERE user_id = #{userId}
+      AND permission_code = #{permissionCode}
+      AND active_yn = 'Y'
+  </select>
+
+  <select id="selectAdminUsers" resultType="map">
+    SELECT
+      u.user_id AS userId,
+      u.email,
+      u.nickname,
+      u.account_status AS accountStatus,
+      u.last_login_at AS lastLoginAt,
+      u.created_at AS createdAt,
+      COALESCE(
+        JSON_ARRAYAGG(
+          CASE WHEN ap.active_yn = 'Y' THEN ap.permission_code ELSE NULL END
+        ),
+        JSON_ARRAY()
+      ) AS permissions
+    FROM user_account u
+    LEFT JOIN admin_permission ap ON ap.user_id = u.user_id
+    WHERE u.account_type = 'ADMIN'
+    GROUP BY u.user_id, u.email, u.nickname, u.account_status, u.last_login_at, u.created_at
+    ORDER BY u.user_id
+  </select>
+
+  <select id="selectAdminUserById" resultType="map">
+    SELECT
+      u.user_id AS userId,
+      u.email,
+      u.nickname,
+      u.account_status AS accountStatus,
+      u.last_login_at AS lastLoginAt,
+      u.created_at AS createdAt,
+      COALESCE(
+        JSON_ARRAYAGG(
+          CASE WHEN ap.active_yn = 'Y' THEN ap.permission_code ELSE NULL END
+        ),
+        JSON_ARRAY()
+      ) AS permissions
+    FROM user_account u
+    LEFT JOIN admin_permission ap ON ap.user_id = u.user_id
+    WHERE u.account_type = 'ADMIN'
+      AND u.user_id = #{userId}
+    GROUP BY u.user_id, u.email, u.nickname, u.account_status, u.last_login_at, u.created_at
+  </select>
+
+  <update id="deactivatePermissions">
+    UPDATE admin_permission
+    SET active_yn = 'N'
+    WHERE user_id = #{userId}
+  </update>
+
+  <insert id="upsertPermission">
+    INSERT INTO admin_permission (user_id, permission_code, active_yn, granted_by, created_at)
+    VALUES (#{userId}, #{permissionCode}, #{activeYn}, #{grantedBy}, NOW())
+    ON DUPLICATE KEY UPDATE
+      active_yn = VALUES(active_yn),
+      granted_by = VALUES(granted_by)
+  </insert>
+</mapper>

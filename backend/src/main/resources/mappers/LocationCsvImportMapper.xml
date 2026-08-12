@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.locations.importer.LocationCsvImportMapper">
+
+  <insert id="upsertLocation" parameterType="map" useGeneratedKeys="true" keyProperty="locationId">
+    INSERT INTO shooting_location (
+      source_location_id,
+      source_variant_no,
+      place_name,
+      sido,
+      sigungu,
+      lot_address,
+      road_address,
+      latitude,
+      longitude,
+      source_conflict_yn,
+      quality_flags_json,
+      search_text,
+      active_yn,
+      created_at
+    ) VALUES (
+      #{sourceLocationId},
+      #{sourceVariantNo},
+      #{placeName},
+      #{sido},
+      #{sigungu},
+      #{lotAddress},
+      #{roadAddress},
+      #{latitude},
+      #{longitude},
+      #{sourceConflictYn},
+      #{qualityFlagsJson},
+      #{searchText},
+      'Y',
+      NOW()
+    )
+    ON DUPLICATE KEY UPDATE
+      location_id = LAST_INSERT_ID(location_id),
+      place_name = VALUES(place_name),
+      sido = VALUES(sido),
+      sigungu = VALUES(sigungu),
+      lot_address = VALUES(lot_address),
+      road_address = VALUES(road_address),
+      latitude = VALUES(latitude),
+      longitude = VALUES(longitude),
+      source_conflict_yn = VALUES(source_conflict_yn),
+      quality_flags_json = VALUES(quality_flags_json),
+      search_text = VALUES(search_text),
+      active_yn = 'Y',
+      updated_at = NOW()
+  </insert>
+
+  <insert id="upsertHistory" parameterType="map">
+    INSERT INTO shooting_location_history (
+      location_id,
+      source_event_id,
+      movie_code,
+      movie_title,
+      production_year,
+      scene_description,
+      characters,
+      source_name,
+      source_url,
+      raw_row_json,
+      created_at
+    ) VALUES (
+      #{locationId},
+      #{sourceEventId},
+      #{movieCode},
+      #{movieTitle},
+      #{productionYear},
+      #{sceneDescription},
+      #{characters},
+      #{sourceName},
+      #{sourceUrl},
+      #{rawRowJson},
+      NOW()
+    )
+    ON DUPLICATE KEY UPDATE
+      location_id = VALUES(location_id),
+      movie_code = VALUES(movie_code),
+      movie_title = VALUES(movie_title),
+      production_year = VALUES(production_year),
+      scene_description = VALUES(scene_description),
+      characters = VALUES(characters),
+      source_name = VALUES(source_name),
+      source_url = VALUES(source_url),
+      raw_row_json = VALUES(raw_row_json)
+  </insert>
+</mapper>

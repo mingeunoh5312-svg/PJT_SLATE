@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.slate.media.MediaImageMapper">
+  <select id="selectTarget" resultType="map">
+    <choose>
+      <when test="entityType == 'PROFILE'">
+        SELECT profile_id AS entityId, user_id AS ownerUserId, profile_image_path AS storedPath,
+               visibility, status FROM member_profile WHERE profile_id = #{entityId}
+      </when>
+      <when test="entityType == 'TEAM'">
+        SELECT team_id AS entityId, leader_user_id AS ownerUserId, representative_image_path AS storedPath,
+               'PUBLIC' AS visibility, status FROM team WHERE team_id = #{entityId}
+      </when>
+      <when test="entityType == 'WORK'">
+        SELECT wi.board_post_id AS entityId, p.author_user_id AS ownerUserId, wi.representative_image_path AS storedPath,
+               p.visibility, p.status FROM work_item wi JOIN board_post p ON p.post_id = wi.board_post_id
+        WHERE wi.board_post_id = #{entityId} AND wi.status = 'PUBLISHED'
+      </when>
+      <when test="entityType == 'PORTFOLIO'">
+        SELECT pi.portfolio_item_id AS entityId, mp.user_id AS ownerUserId, pi.thumbnail_image_path AS storedPath,
+               mp.visibility, pi.status FROM portfolio_item pi JOIN member_profile mp ON mp.profile_id = pi.profile_id
+        WHERE pi.portfolio_item_id = #{entityId} AND mp.status = 'ACTIVE'
+      </when>
+      <when test="entityType == 'CONTEST'">
+        SELECT contest_id AS entityId, COALESCE(requester_company_user_id, created_by) AS ownerUserId,
+               representative_image_path AS storedPath, 'PUBLIC' AS visibility, status
+        FROM contest
+        WHERE contest_id = #{entityId}
+      </when>
+      <when test="entityType == 'CONTEST_REQUEST'">
+        SELECT request_id AS entityId, requester_user_id AS ownerUserId,
+               representative_image_path AS storedPath, 'PRIVATE' AS visibility, status
+        FROM contest_open_request
+        WHERE request_id = #{entityId}
+      </when>
+      <otherwise>SELECT NULL AS entityId, NULL AS ownerUserId, NULL AS storedPath, 'PRIVATE' AS visibility, 'DELETED' AS status WHERE 1 = 0</otherwise>
+    </choose>
+  </select>
+
+  <update id="updatePath">
+    <choose>
+      <when test="entityType == 'PROFILE'">UPDATE member_profile SET profile_image_path = #{storedPath}, updated_at = NOW() WHERE profile_id = #{entityId} AND status = 'ACTIVE'</when>
+      <when test="entityType == 'TEAM'">UPDATE team SET representative_image_path = #{storedPath}, updated_at = NOW() WHERE team_id = #{entityId} AND status != 'DELETED'</when>
+      <when test="entityType == 'WORK'">UPDATE work_item SET representative_image_path = #{storedPath}, updated_at = NOW() WHERE board_post_id = #{entityId} AND status = 'PUBLISHED'</when>
+      <when test="entityType == 'PORTFOLIO'">UPDATE portfolio_item SET thumbnail_image_path = #{storedPath}, updated_at = NOW() WHERE portfolio_item_id = #{entityId} AND status = 'ACTIVE'</when>
+      <when test="entityType == 'CONTEST'">UPDATE contest SET representative_image_path = #{storedPath}, updated_at = NOW() WHERE contest_id = #{entityId}</when>
+      <when test="entityType == 'CONTEST_REQUEST'">UPDATE contest_open_request SET representative_image_path = #{storedPath}, updated_at = NOW() WHERE request_id = #{entityId}</when>
+      <otherwise>UPDATE contest_open_request SET request_id = request_id WHERE 1 = 0</otherwise>
+    </choose>
+  </update>
+</mapper>

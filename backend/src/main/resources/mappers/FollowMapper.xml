@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.follows.FollowMapper">
+
+  <sql id="publicProfileConditions">
+    u.account_type = 'USER'
+    AND u.account_status = 'ACTIVE'
+    AND p.status = 'ACTIVE'
+    AND p.visibility = 'PUBLIC'
+  </sql>
+
+  <sql id="followListColumns">
+    p.profile_id AS profileId,
+    p.user_id AS userId,
+    u.nickname,
+    p.display_name AS displayName,
+    p.short_intro AS shortIntro,
+    CASE WHEN p.profile_image_path IS NOT NULL THEN CONCAT('/api/media/images/profile/', p.profile_id) ELSE NULL END AS profileImageUrl,
+    rg.public_display_name AS publicRegionName,
+    p.experience_level AS experienceLevel,
+    uf.created_at AS followedAt,
+    CASE WHEN EXISTS (
+      SELECT 1
+      FROM user_follow current_follow
+      WHERE current_follow.follower_user_id = #{currentUserId}
+        AND current_follow.following_user_id = p.user_id
+    ) THEN TRUE ELSE FALSE END AS followingByCurrentUser
+  </sql>
+
+  <select id="selectActiveActorByUserId" resultType="map">
+    SELECT
+      p.profile_id AS profileId,
+      p.user_id AS userId,
+      u.nickname,
+      p.display_name AS displayName
+    FROM user_account u
+    JOIN member_profile p ON p.user_id = u.user_id
+    WHERE u.user_id = #{userId}
+      AND u.account_type = 'USER'
+      AND u.account_status = 'ACTIVE'
+      AND p.status = 'ACTIVE'
+  </select>
+
+  <select id="selectPublicTargetByProfileId" resultType="map">
+    SELECT
+      p.profile_id AS profileId,
+      p.user_id AS userId,
+      u.nickname,
+      p.display_name AS displayName
+    FROM member_profile p
+    JOIN user_account u ON u.user_id = p.user_id
+    WHERE p.profile_id = #{profileId}
+      AND <include refid="publicProfileConditions" />
+  </select>
+
+  <select id="countRelation" resultType="int">
+    SELECT COUNT(*)
+    FROM user_follow
+    WHERE follower_user_id = #{followerUserId}
+      AND following_user_id = #{followingUserId}
+  </select>
+
+  <insert id="insertIgnoreFollow">
+    INSERT IGNORE INTO user_follow (follower_user_id, following_user_id)
+    VALUES (#{followerUserId}, #{followingUserId})
+  </insert>
+
+  <delete id="deleteFollow">
+    DELETE FROM user_follow
+    WHERE follower_user_id = #{followerUserId}
+      AND following_user_id = #{followingUserId}
+  </delete>
+
+  <select id="countPublicFollowers" resultType="int">
+    SELECT COUNT(*)
+    FROM user_follow uf
+    JOIN user_account u ON u.user_id = uf.follower_user_id
+    JOIN member_profile p ON p.user_id = u.user_id
+    WHERE uf.following_user_id = #{followingUserId}
+      AND <include refid="publicProfileConditions" />
+  </select>
+
+  <select id="countPublicFollowing" resultType="int">
+    SELECT COUNT(*)
+    FROM user_follow uf
+    JOIN user_account u ON u.user_id = uf.following_user_id
+    JOIN member_profile p ON p.user_id = u.user_id
+    WHERE uf.follower_user_id = #{followerUserId}
+      AND <include refid="publicProfileConditions" />
+  </select>
+
+  <select id="selectPublicFollowers" resultType="map">
+    SELECT <include refid="followListColumns" />
+    FROM user_follow uf
+    JOIN user_account u ON u.user_id = uf.follower_user_id
+    JOIN member_profile p ON p.user_id = u.user_id
+    JOIN region rg ON rg.region_id = p.region_id
+    WHERE uf.following_user_id = #{followingUserId}
+      AND <include refid="publicProfileConditions" />
+    ORDER BY uf.created_at DESC, uf.follower_user_id DESC
+    LIMIT #{limit} OFFSET #{offset}
+  </select>
+
+  <select id="selectPublicFollowing" resultType="map">
+    SELECT <include refid="followListColumns" />
+    FROM user_follow uf
+    JOIN user_account u ON u.user_id = uf.following_user_id
+    JOIN member_profile p ON p.user_id = u.user_id
+    JOIN region rg ON rg.region_id = p.region_id
+    WHERE uf.follower_user_id = #{followerUserId}
+      AND <include refid="publicProfileConditions" />
+    ORDER BY uf.created_at DESC, uf.following_user_id DESC
+    LIMIT #{limit} OFFSET #{offset}
+  </select>
+
+</mapper>

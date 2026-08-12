@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.moderation.ModerationMapper">
+
+  <select id="countPendingReport" resultType="int">
+    SELECT COUNT(*)
+    FROM content_report
+    WHERE reporter_user_id = #{reporterUserId}
+      AND target_type = #{targetType}
+      AND target_id = #{targetId}
+      AND status = 'PENDING'
+  </select>
+
+  <insert id="insertReport" parameterType="map" useGeneratedKeys="true" keyProperty="reportId">
+    INSERT INTO content_report (
+      reporter_user_id, target_type, target_id, reason_code, detail, status, created_at
+    ) VALUES (
+      #{reporterUserId}, #{targetType}, #{targetId}, #{reasonCode}, #{detail}, 'PENDING', NOW()
+    )
+  </insert>
+
+  <select id="selectReports" resultType="map">
+    SELECT
+      cr.report_id AS reportId,
+      cr.reporter_user_id AS reporterUserId,
+      reporter.nickname AS reporterNickname,
+      reporter.email AS reporterEmail,
+      cr.target_type AS targetType,
+      cr.target_id AS targetId,
+      COALESCE(bp.title, CONCAT('리뷰 #', br.review_id)) AS targetTitle,
+      COALESCE(bp.content, br.content) AS targetContent,
+      COALESCE(bp.status, br.status) AS targetStatus,
+      COALESCE(bp.author_user_id, br.author_user_id) AS targetAuthorUserId,
+      author.nickname AS targetAuthorNickname,
+      author.email AS targetAuthorEmail,
+      cr.reason_code AS reasonCode,
+      cr.detail,
+      cr.status,
+      cr.moderation_action AS moderationAction,
+      cr.resolution_note AS resolutionNote,
+      cr.reviewed_by AS reviewedBy,
+      reviewer.nickname AS reviewedByNickname,
+      cr.reviewed_at AS reviewedAt,
+      cr.created_at AS createdAt,
+      cr.updated_at AS updatedAt
+    FROM content_report cr
+    JOIN user_account reporter ON reporter.user_id = cr.reporter_user_id
+    LEFT JOIN board_post bp
+      ON cr.target_type = 'BOARD_POST'
+     AND bp.post_id = cr.target_id
+    LEFT JOIN board_review br
+      ON cr.target_type = 'BOARD_REVIEW'
+     AND br.review_id = cr.target_id
+    LEFT JOIN user_account author ON author.user_id = COALESCE(bp.author_user_id, br.author_user_id)
+    LEFT JOIN user_account reviewer ON reviewer.user_id = cr.reviewed_by
+    WHERE 1 = 1
+      <if test="status != null and status != ''">
+        AND cr.status = #{status}
+      </if>
+      <if test="targetType != null and targetType != ''">
+        AND cr.target_type = #{targetType}
+      </if>
+    ORDER BY FIELD(cr.status, 'PENDING', 'ACCEPTED', 'REJECTED'), cr.created_at DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectReportById" resultType="map">
+    SELECT
+      cr.report_id AS reportId,
+      cr.reporter_user_id AS reporterUserId,
+      reporter.nickname AS reporterNickname,
+      cr.target_type AS targetType,
+      cr.target_id AS targetId,
+      COALESCE(bp.title, CONCAT('리뷰 #', br.review_id)) AS targetTitle,
+      COALESCE(bp.content, br.content) AS targetContent,
+      COALESCE(bp.status, br.status) AS targetStatus,
+      COALESCE(bp.author_user_id, br.author_user_id) AS targetAuthorUserId,
+      cr.reason_code AS reasonCode,
+      cr.detail,
+      cr.status,
+      cr.moderation_action AS moderationAction,
+      cr.resolution_note AS resolutionNote,
+      cr.reviewed_by AS reviewedBy,
+      cr.reviewed_at AS reviewedAt,
+      cr.created_at AS createdAt
+    FROM content_report cr
+    JOIN user_account reporter ON reporter.user_id = cr.reporter_user_id
+    LEFT JOIN board_post bp
+      ON cr.target_type = 'BOARD_POST'
+     AND bp.post_id = cr.target_id
+    LEFT JOIN board_review br
+      ON cr.target_type = 'BOARD_REVIEW'
+     AND br.review_id = cr.target_id
+    WHERE cr.report_id = #{reportId}
+  </select>
+
+  <update id="updateReportDecision">
+    UPDATE content_report
+    SET status = #{status},
+        moderation_action = #{moderationAction},
+        resolution_note = #{resolutionNote},
+        reviewed_by = #{reviewedBy},
+        reviewed_at = NOW(),
+        updated_at = NOW()
+    WHERE report_id = #{reportId}
+      AND status = 'PENDING'
+  </update>
+
+  <select id="selectUsers" resultType="map">
+    SELECT
+      u.user_id AS userId,
+      u.email,
+      u.nickname,
+      u.account_type AS accountType,
+      u.account_status AS accountStatus,
+      u.last_login_at AS lastLoginAt,
+      u.created_at AS createdAt,
+      us.sanction_id AS activeSanctionId,
+      us.sanction_type AS activeSanctionType,
+      us.reason AS activeSanctionReason,
+      us.sanction_until AS activeSanctionUntil
+    FROM user_account u
+    LEFT JOIN user_sanction us
+      ON us.user_id = u.user_id
+     AND us.status = 'ACTIVE'
+    WHERE 1 = 1
+      <if test="keyword != null and keyword != ''">
+        AND (
+          u.email LIKE CONCAT('%', #{keyword}, '%')
+          OR u.nickname LIKE CONCAT('%', #{keyword}, '%')
+          OR CAST(u.user_id AS CHAR) = #{keyword}
+        )
+      </if>
+      <if test="accountStatus != null and accountStatus != ''">
+        AND u.account_status = #{accountStatus}
+      </if>
+    ORDER BY FIELD(u.account_status, 'TEMP_SUSPENDED', 'PERM_SUSPENDED', 'WITHDRAWN', 'ACTIVE', 'PENDING_APPROVAL'), u.created_at DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectSanctions" resultType="map">
+    SELECT
+      us.sanction_id AS sanctionId,
+      us.user_id AS userId,
+      target.email,
+      target.nickname,
+      target.account_type AS accountType,
+      target.account_status AS accountStatus,
+      us.sanction_type AS sanctionType,
+      us.status,
+      us.reason,
+      us.sanction_until AS sanctionUntil,
+      us.created_by AS createdBy,
+      creator.nickname AS createdByNickname,
+      us.revoked_by AS revokedBy,
+      revoker.nickname AS revokedByNickname,
+      us.revoked_at AS revokedAt,
+      us.revoke_reason AS revokeReason,
+      us.created_at AS createdAt,
+      us.updated_at AS updatedAt
+    FROM user_sanction us
+    JOIN user_account target ON target.user_id = us.user_id
+    JOIN user_account creator ON creator.user_id = us.created_by
+    LEFT JOIN user_account revoker ON revoker.user_id = us.revoked_by
+    WHERE 1 = 1
+      <if test="status != null and status != ''">
+        AND us.status = #{status}
+      </if>
+    ORDER BY FIELD(us.status, 'ACTIVE', 'REVOKED', 'EXPIRED'), us.created_at DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectSanctionById" resultType="map">
+    SELECT
+      us.sanction_id AS sanctionId,
+      us.user_id AS userId,
+      target.email,
+      target.nickname,
+      target.account_type AS accountType,
+      target.account_status AS accountStatus,
+      us.sanction_type AS sanctionType,
+      us.status,
+      us.reason,
+      us.sanction_until AS sanctionUntil,
+      us.created_by AS createdBy,
+      us.revoked_by AS revokedBy,
+      us.revoked_at AS revokedAt,
+      us.revoke_reason AS revokeReason,
+      us.created_at AS createdAt
+    FROM user_sanction us
+    JOIN user_account target ON target.user_id = us.user_id
+    WHERE us.sanction_id = #{sanctionId}
+  </select>
+
+  <select id="selectActiveSanctionByUserId" resultType="map">
+    SELECT
+      sanction_id AS sanctionId,
+      user_id AS userId,
+      sanction_type AS sanctionType,
+      status,
+      reason,
+      sanction_until AS sanctionUntil,
+      created_by AS createdBy,
+      created_at AS createdAt
+    FROM user_sanction
+    WHERE user_id = #{userId}
+      AND status = 'ACTIVE'
+    ORDER BY FIELD(sanction_type, 'PERM_SUSPENDED', 'TEMP_SUSPENDED'), created_at DESC
+    LIMIT 1
+  </select>
+
+  <select id="selectRecentSanctionsByUserId" resultType="map">
+    SELECT
+      us.sanction_id AS sanctionId,
+      us.user_id AS userId,
+      us.sanction_type AS sanctionType,
+      us.status,
+      us.reason,
+      us.sanction_until AS sanctionUntil,
+      us.created_by AS createdBy,
+      creator.nickname AS createdByNickname,
+      us.revoked_by AS revokedBy,
+      revoker.nickname AS revokedByNickname,
+      us.revoked_at AS revokedAt,
+      us.revoke_reason AS revokeReason,
+      us.created_at AS createdAt,
+      us.updated_at AS updatedAt
+    FROM user_sanction us
+    JOIN user_account creator ON creator.user_id = us.created_by
+    LEFT JOIN user_account revoker ON revoker.user_id = us.revoked_by
+    WHERE us.user_id = #{userId}
+    ORDER BY us.created_at DESC, us.sanction_id DESC
+    LIMIT #{limit}
+  </select>
+
+  <insert id="insertSanction" parameterType="map" useGeneratedKeys="true" keyProperty="sanctionId">
+    INSERT INTO user_sanction (
+      user_id, sanction_type, status, reason, sanction_until, created_by, created_at
+    ) VALUES (
+      #{userId}, #{sanctionType}, 'ACTIVE', #{reason}, #{sanctionUntil}, #{createdBy}, NOW()
+    )
+  </insert>
+
+  <update id="revokeSanction">
+    UPDATE user_sanction
+    SET status = 'REVOKED',
+        revoked_by = #{revokedBy},
+        revoked_at = NOW(),
+        revoke_reason = #{revokeReason},
+        updated_at = NOW()
+    WHERE sanction_id = #{sanctionId}
+      AND status = 'ACTIVE'
+  </update>
+
+  <update id="expireSanctionsByUserId">
+    UPDATE user_sanction
+    SET status = 'EXPIRED',
+        updated_at = NOW()
+    WHERE user_id = #{userId}
+      AND status = 'ACTIVE'
+      AND sanction_type = 'TEMP_SUSPENDED'
+      AND sanction_until IS NOT NULL
+      AND sanction_until &lt;= NOW()
+  </update>
+
+  <select id="countActiveSanctionsByUserId" resultType="int">
+    SELECT COUNT(*)
+    FROM user_sanction
+    WHERE user_id = #{userId}
+      AND status = 'ACTIVE'
+  </select>
+</mapper>

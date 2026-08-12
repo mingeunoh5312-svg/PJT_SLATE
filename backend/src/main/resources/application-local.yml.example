@@ -1,0 +1,57 @@
+spring:
+  datasource:
+    url: ${SLATE_DB_URL:jdbc:mysql://localhost:3306/slate?serverTimezone=Asia/Seoul&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${SLATE_DB_USERNAME:slate_app}
+    password: ${SLATE_DB_PASSWORD:CHANGE_ME}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+slate:
+  security:
+    jwt:
+      secret: ${SLATE_JWT_SECRET:CHANGE_ME_LOCAL_SECRET}
+  upload:
+    dir: ${SLATE_UPLOAD_DIR:uploads}
+    ffprobe-path: ${SLATE_FFPROBE_PATH:ffprobe}
+  audit:
+    ip-hash-salt: ${SLATE_AUDIT_IP_HASH_SALT:CHANGE_ME_LOCAL_AUDIT_SALT}
+  cors:
+    allowed-origins: ${SLATE_CORS_ALLOWED_ORIGINS:http://localhost:5174,http://127.0.0.1:5174}
+  demo-access:
+    enabled: ${SLATE_DEMO_ACCESS_ENABLED:false}
+    code: ${SLATE_DEMO_ACCESS_CODE:}
+  public-data:
+    kobis:
+      api-key: ${KOBIS_API_KEY:}
+      base-url: ${KOBIS_BASE_URL:http://www.kobis.or.kr/kobisopenapi/webservice/rest}
+    contest-korea:
+      enabled: ${CONTESTKOREA_CRAWLER_ENABLED:false}
+      base-url: ${CONTESTKOREA_BASE_URL:https://www.contestkorea.com}
+      list-path: ${CONTESTKOREA_LIST_PATH:/sub/list.php}
+      category-code: ${CONTESTKOREA_CATEGORY_CODE:031210001}
+      int-gbn: ${CONTESTKOREA_INT_GBN:1}
+      user-agent: '${CONTESTKOREA_USER_AGENT:SlateBot/1.0 (contact: helpdesk@slate.local)}'
+      request-delay-millis: ${CONTESTKOREA_REQUEST_DELAY_MILLIS:1500}
+      connect-timeout-millis: ${CONTESTKOREA_CONNECT_TIMEOUT_MILLIS:5000}
+      read-timeout-millis: ${CONTESTKOREA_READ_TIMEOUT_MILLIS:10000}
+      max-pages: ${CONTESTKOREA_MAX_PAGES:10}
+      max-items-per-run: ${CONTESTKOREA_MAX_ITEMS_PER_RUN:100}
+      poster-download-enabled: ${CONTESTKOREA_POSTER_DOWNLOAD_ENABLED:true}
+      required-permission-text: ${CONTESTKOREA_REQUIRED_PERMISSION_TEXT:콘테스트코리아 출처 표기}
+      source-name: ${CONTESTKOREA_SOURCE_NAME:CONTESTKOREA}
+      source-attribution: '${CONTESTKOREA_SOURCE_ATTRIBUTION:출처: 콘테스트코리아}'
+  youtube:
+    api-key: ${YOUTUBE_API_KEY:}
+    base-url: ${YOUTUBE_BASE_URL:https://www.googleapis.com/youtube/v3}
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      model: ${OPENAI_MODEL:gpt-4o-mini}
+  locations:
+    import:
+      enabled: ${SLATE_LOCATION_IMPORT_ENABLED:false}
+      dry-run: ${SLATE_LOCATION_IMPORT_DRY_RUN:true}
+      exit-after-run: ${SLATE_LOCATION_IMPORT_EXIT_AFTER_RUN:false}
+      path: ${SLATE_LOCATION_IMPORT_PATH:../assets/영화 로케이션 촬영 이력.csv}
+      encoding: ${SLATE_LOCATION_IMPORT_ENCODING:MS949}
+      chunk-size: ${SLATE_LOCATION_IMPORT_CHUNK_SIZE:500}

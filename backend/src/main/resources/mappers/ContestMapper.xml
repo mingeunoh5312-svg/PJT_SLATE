@@ -1,0 +1,663 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.contests.ContestMapper">
+
+  <sql id="contestColumns">
+    c.contest_id AS contestId,
+    c.contest_type AS contestType,
+    c.title,
+    c.summary,
+    c.theme,
+    c.prize_text AS prizeText,
+    c.total_prize_amount AS totalPrizeAmount,
+    c.first_prize_amount AS firstPrizeAmount,
+    c.organizer,
+    c.organizer_type AS organizerType,
+    c.representative_image_url AS representativeImageUrl,
+    c.representative_image_path AS representativeImagePath,
+    c.poster_source_type AS posterSourceType,
+    c.poster_original_url AS posterOriginalUrl,
+    c.poster_collected_at AS posterCollectedAt,
+    CASE WHEN c.representative_image_path IS NOT NULL THEN CONCAT('/api/media/images/contest/', c.contest_id) ELSE NULL END AS uploadedImageUrl,
+    c.submission_email AS submissionEmail,
+    c.external_url AS externalUrl,
+    c.target_text AS targetText,
+    c.target_codes_json AS targetCodesJson,
+    c.region_codes_json AS regionCodesJson,
+    c.required_roles_text AS requiredRolesText,
+    c.related_genres_text AS relatedGenresText,
+    c.start_at AS startAt,
+    c.deadline_at AS deadlineAt,
+    DATEDIFF(c.deadline_at, NOW()) AS dDay,
+    c.status,
+    c.save_count AS saveCount,
+    c.created_by AS createdBy,
+    c.requester_company_user_id AS requesterCompanyUserId,
+    c.source_request_id AS sourceRequestId,
+    c.source_name AS sourceName,
+    c.source_external_id AS sourceExternalId,
+    c.source_url AS sourceUrl,
+    c.source_category_code AS sourceCategoryCode,
+    c.source_collected_at AS sourceCollectedAt,
+    c.source_updated_at AS sourceUpdatedAt,
+    c.source_permission_text AS sourcePermissionText,
+    c.source_attribution AS sourceAttribution,
+    COALESCE(prep.prepare_count, 0) AS prepareCount,
+    COALESCE(prep.prepare_count, 0) * 4 + c.save_count * 3 AS popularScore,
+    CASE
+      WHEN #{userId} IS NULL THEN 0
+      WHEN EXISTS (
+        SELECT 1 FROM contest_save cs
+        WHERE cs.contest_id = c.contest_id
+          AND cs.user_id = #{userId}
+      ) THEN 1
+      ELSE 0
+    END AS savedByCurrentUser,
+    c.created_at AS createdAt,
+    c.updated_at AS updatedAt
+  </sql>
+
+  <sql id="prepareJoin">
+    LEFT JOIN (
+      SELECT contest_id, COUNT(*) AS prepare_count
+      FROM contest_submission_prepare
+      WHERE updated_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+         OR created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+      GROUP BY contest_id
+    ) prep ON prep.contest_id = c.contest_id
+  </sql>
+
+  <select id="selectContests" resultType="map">
+    SELECT <include refid="contestColumns" />
+    FROM contest c
+    <include refid="prepareJoin" />
+    WHERE 1 = 1
+      <if test="filter.status != 'ALL'">
+        AND c.status = #{filter.status}
+      </if>
+      <if test="filter.contestType != null">
+        AND c.contest_type = #{filter.contestType}
+      </if>
+      <if test="filter.keyword != null">
+        AND (c.title LIKE CONCAT('%', #{filter.keyword}, '%')
+          OR c.organizer LIKE CONCAT('%', #{filter.keyword}, '%')
+          OR c.summary LIKE CONCAT('%', #{filter.keyword}, '%'))
+      </if>
+      <if test="filter.deadlineWithinDays != null">
+        AND c.deadline_at &gt;= NOW()
+        <choose>
+          <when test="filter.deadlineWithinDays == 7">AND c.deadline_at &lt;= DATE_ADD(NOW(), INTERVAL 7 DAY)</when>
+          <when test="filter.deadlineWithinDays == 14">AND c.deadline_at &lt;= DATE_ADD(NOW(), INTERVAL 14 DAY)</when>
+          <when test="filter.deadlineWithinDays == 30">AND c.deadline_at &lt;= DATE_ADD(NOW(), INTERVAL 30 DAY)</when>
+        </choose>
+      </if>
+      <if test="filter.targetCodes != null and !filter.targetCodes.isEmpty()">
+        AND (
+          JSON_CONTAINS(c.target_codes_json, JSON_QUOTE('ANYONE'))
+          <foreach collection="filter.targetCodes" item="code">OR JSON_CONTAINS(c.target_codes_json, JSON_QUOTE(#{code}))</foreach>
+        )
+      </if>
+      <if test="filter.regionMode != null">
+        <choose>
+          <when test="filter.regionMode == 'ONLINE'">
+            AND JSON_CONTAINS(c.region_codes_json, JSON_QUOTE('ONLINE'))
+          </when>
+          <when test="filter.regionMode == 'NATIONWIDE'">
+            AND (
+              JSON_CONTAINS(c.region_codes_json, JSON_QUOTE('NATIONWIDE'))
+              OR JSON_CONTAINS(c.region_codes_json, JSON_QUOTE('ALL'))
+            )
+          </when>
+          <when test="filter.regionMode == 'CAPITAL'">
+            AND (
+              JSON_CONTAINS(c.region_codes_json, JSON_QUOTE('CAPITAL'))
+              OR JSON_CONTAINS(c.region_codes_json, JSON_QUOTE('SEOUL'))
+              OR JSON_CONTAINS(c.region_codes_json, JSON_QUOTE('INCHEON'))
+              OR JSON_CONTAINS(c.region_codes_json, JSON_QUOTE('GYEONGGI'))
+            )
+          </when>
+          <when test="filter.regionMode == 'REGIONAL'">
+            AND c.region_codes_json IS NOT NULL
+            AND JSON_LENGTH(c.region_codes_json) &gt; 0
+            AND NOT JSON_CONTAINS(c.region_codes_json, JSON_QUOTE('ONLINE'))
+            AND NOT JSON_CONTAINS(c.region_codes_json, JSON_QUOTE('NATIONWIDE'))
+            AND NOT JSON_CONTAINS(c.region_codes_json, JSON_QUOTE('ALL'))
+          </when>
+        </choose>
+      </if>
+      <if test="filter.regionMode == null and filter.regionCodes != null and !filter.regionCodes.isEmpty()">
+        AND (
+          JSON_CONTAINS(c.region_codes_json, JSON_QUOTE('ALL'))
+          <foreach collection="filter.regionCodes" item="code">OR JSON_CONTAINS(c.region_codes_json, JSON_QUOTE(#{code}))</foreach>
+        )
+      </if>
+      <if test="filter.organizerTypes != null and !filter.organizerTypes.isEmpty()">
+        AND c.organizer_type IN
+        <foreach collection="filter.organizerTypes" item="code" open="(" separator="," close=")">#{code}</foreach>
+      </if>
+      <if test="filter.totalPrizeMin != null">AND c.total_prize_amount &gt;= #{filter.totalPrizeMin}</if>
+      <if test="filter.totalPrizeMax != null">AND c.total_prize_amount &lt;= #{filter.totalPrizeMax}</if>
+      <if test="filter.firstPrizeMin != null">AND c.first_prize_amount &gt;= #{filter.firstPrizeMin}</if>
+      <if test="filter.firstPrizeMax != null">AND c.first_prize_amount &lt;= #{filter.firstPrizeMax}</if>
+    ORDER BY
+      <choose>
+        <when test="filter.sort == 'latest'">c.created_at DESC</when>
+        <when test="filter.sort == 'popular'">popularScore DESC, c.save_count DESC, c.created_at DESC</when>
+        <when test="filter.sort == 'deadline'">c.deadline_at ASC</when>
+        <otherwise>c.deadline_at ASC, c.contest_id ASC</otherwise>
+      </choose>
+    LIMIT #{filter.limit}
+  </select>
+
+  <select id="selectUrgentContests" resultType="map">
+    SELECT <include refid="contestColumns" />
+    FROM contest c
+    <include refid="prepareJoin" />
+    WHERE c.status = 'OPEN'
+      AND c.deadline_at &gt; NOW()
+    ORDER BY c.deadline_at ASC, c.contest_id ASC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectContestById" resultType="map">
+    SELECT <include refid="contestColumns" />
+    FROM contest c
+    <include refid="prepareJoin" />
+    WHERE c.contest_id = #{contestId}
+  </select>
+
+  <insert id="insertContest" parameterType="map" useGeneratedKeys="true" keyProperty="contestId">
+    INSERT INTO contest (
+      contest_type, title, summary, theme, prize_text, total_prize_amount, first_prize_amount, organizer, organizer_type,
+      representative_image_url, representative_image_path, poster_source_type, poster_original_url, poster_collected_at,
+      submission_email, external_url,
+      target_text, target_codes_json, region_codes_json,
+      required_roles_text, related_genres_text,
+      start_at, deadline_at, status, save_count,
+      created_by, requester_company_user_id, source_request_id,
+      source_name, source_external_id, source_url, source_category_code, source_collected_at, source_updated_at,
+      source_permission_text, source_attribution,
+      created_at
+    ) VALUES (
+      #{contestType}, #{title}, #{summary}, #{theme}, #{prizeText}, #{totalPrizeAmount,jdbcType=BIGINT}, #{firstPrizeAmount,jdbcType=BIGINT}, #{organizer}, #{organizerType,jdbcType=VARCHAR},
+      #{representativeImageUrl}, #{representativeImagePath,jdbcType=VARCHAR}, #{posterSourceType,jdbcType=VARCHAR}, #{posterOriginalUrl,jdbcType=VARCHAR}, #{posterCollectedAt,jdbcType=TIMESTAMP},
+      #{submissionEmail}, #{externalUrl},
+      #{targetText}, #{targetCodesJson,jdbcType=VARCHAR}, #{regionCodesJson,jdbcType=VARCHAR},
+      #{requiredRolesText}, #{relatedGenresText},
+      #{startAt}, #{deadlineAt}, #{status}, 0,
+      #{createdBy,jdbcType=BIGINT}, #{requesterCompanyUserId,jdbcType=BIGINT}, #{sourceRequestId,jdbcType=BIGINT},
+      #{sourceName,jdbcType=VARCHAR}, #{sourceExternalId,jdbcType=VARCHAR}, #{sourceUrl,jdbcType=VARCHAR}, #{sourceCategoryCode,jdbcType=VARCHAR},
+      #{sourceCollectedAt,jdbcType=TIMESTAMP}, #{sourceUpdatedAt,jdbcType=TIMESTAMP},
+      #{sourcePermissionText,jdbcType=VARCHAR}, #{sourceAttribution,jdbcType=VARCHAR},
+      NOW()
+    )
+  </insert>
+
+  <select id="selectContestBySource" resultType="map">
+    SELECT
+      contest_id AS contestId,
+      source_name AS sourceName,
+      source_external_id AS sourceExternalId,
+      contest_type AS contestType,
+      title,
+      summary,
+      theme,
+      prize_text AS prizeText,
+      total_prize_amount AS totalPrizeAmount,
+      first_prize_amount AS firstPrizeAmount,
+      organizer,
+      organizer_type AS organizerType,
+      representative_image_url AS representativeImageUrl,
+      representative_image_path AS representativeImagePath,
+      poster_source_type AS posterSourceType,
+      poster_original_url AS posterOriginalUrl,
+      poster_collected_at AS posterCollectedAt,
+      external_url AS externalUrl,
+      target_text AS targetText,
+      target_codes_json AS targetCodesJson,
+      region_codes_json AS regionCodesJson,
+      required_roles_text AS requiredRolesText,
+      related_genres_text AS relatedGenresText,
+      start_at AS startAt,
+      deadline_at AS deadlineAt,
+      status,
+      source_url AS sourceUrl,
+      source_category_code AS sourceCategoryCode,
+      source_permission_text AS sourcePermissionText,
+      source_attribution AS sourceAttribution
+    FROM contest
+    WHERE source_name = #{sourceName}
+      AND source_external_id = #{sourceExternalId}
+  </select>
+
+  <insert id="upsertContestFromCrawler" parameterType="map" useGeneratedKeys="true" keyProperty="contestId">
+    INSERT INTO contest (
+      contest_type, title, summary, theme, prize_text, total_prize_amount, first_prize_amount, organizer, organizer_type,
+      representative_image_url, representative_image_path, poster_source_type, poster_original_url, poster_collected_at,
+      submission_email, external_url,
+      target_text, target_codes_json, region_codes_json,
+      required_roles_text, related_genres_text,
+      start_at, deadline_at, status, save_count,
+      created_by, requester_company_user_id, source_request_id,
+      source_name, source_external_id, source_url, source_category_code, source_collected_at, source_updated_at,
+      source_permission_text, source_attribution,
+      created_at
+    ) VALUES (
+      #{contestType}, #{title}, #{summary}, #{theme}, #{prizeText}, #{totalPrizeAmount,jdbcType=BIGINT}, #{firstPrizeAmount,jdbcType=BIGINT}, #{organizer}, #{organizerType,jdbcType=VARCHAR},
+      #{representativeImageUrl,jdbcType=VARCHAR}, #{representativeImagePath,jdbcType=VARCHAR}, #{posterSourceType,jdbcType=VARCHAR}, #{posterOriginalUrl,jdbcType=VARCHAR}, #{posterCollectedAt,jdbcType=TIMESTAMP},
+      NULL, #{externalUrl},
+      #{targetText}, #{targetCodesJson,jdbcType=VARCHAR}, #{regionCodesJson,jdbcType=VARCHAR},
+      #{requiredRolesText}, #{relatedGenresText},
+      #{startAt}, #{deadlineAt}, #{status}, 0,
+      #{createdBy,jdbcType=BIGINT}, #{requesterCompanyUserId,jdbcType=BIGINT}, #{sourceRequestId,jdbcType=BIGINT},
+      #{sourceName,jdbcType=VARCHAR}, #{sourceExternalId,jdbcType=VARCHAR}, #{sourceUrl,jdbcType=VARCHAR}, #{sourceCategoryCode,jdbcType=VARCHAR},
+      #{sourceCollectedAt,jdbcType=TIMESTAMP}, #{sourceUpdatedAt,jdbcType=TIMESTAMP},
+      #{sourcePermissionText,jdbcType=VARCHAR}, #{sourceAttribution,jdbcType=VARCHAR},
+      NOW()
+    )
+    ON DUPLICATE KEY UPDATE
+      contest_id = LAST_INSERT_ID(contest_id),
+      contest_type = VALUES(contest_type),
+      title = VALUES(title),
+      summary = VALUES(summary),
+      theme = VALUES(theme),
+      prize_text = VALUES(prize_text),
+      total_prize_amount = VALUES(total_prize_amount),
+      first_prize_amount = VALUES(first_prize_amount),
+      organizer = VALUES(organizer),
+      organizer_type = VALUES(organizer_type),
+      representative_image_url = VALUES(representative_image_url),
+      representative_image_path = VALUES(representative_image_path),
+      poster_source_type = VALUES(poster_source_type),
+      poster_original_url = VALUES(poster_original_url),
+      poster_collected_at = VALUES(poster_collected_at),
+      external_url = VALUES(external_url),
+      target_text = VALUES(target_text),
+      target_codes_json = VALUES(target_codes_json),
+      region_codes_json = VALUES(region_codes_json),
+      required_roles_text = VALUES(required_roles_text),
+      related_genres_text = VALUES(related_genres_text),
+      start_at = VALUES(start_at),
+      deadline_at = VALUES(deadline_at),
+      status = VALUES(status),
+      source_url = VALUES(source_url),
+      source_category_code = VALUES(source_category_code),
+      source_collected_at = VALUES(source_collected_at),
+      source_updated_at = VALUES(source_updated_at),
+      source_permission_text = VALUES(source_permission_text),
+      source_attribution = VALUES(source_attribution),
+      updated_at = NOW()
+  </insert>
+
+  <select id="selectManagedContests" resultType="map">
+    SELECT <include refid="contestColumns" />
+    FROM contest c
+    <include refid="prepareJoin" />
+    WHERE 1 = 1
+      <if test="status != 'ALL'">
+        AND c.status = #{status}
+      </if>
+      <if test="contestType != null">
+        AND c.contest_type = #{contestType}
+      </if>
+      <if test="requesterCompanyUserId != null">
+        AND c.requester_company_user_id = #{requesterCompanyUserId}
+      </if>
+    ORDER BY FIELD(c.status, 'OPEN', 'ENDED'), c.deadline_at ASC, c.created_at DESC
+    LIMIT #{limit}
+  </select>
+
+  <update id="updateContest" parameterType="map">
+    UPDATE contest
+    SET contest_type = #{contestType},
+        title = #{title},
+        summary = #{summary},
+        theme = #{theme},
+        prize_text = #{prizeText},
+        total_prize_amount = #{totalPrizeAmount,jdbcType=BIGINT},
+        first_prize_amount = #{firstPrizeAmount,jdbcType=BIGINT},
+        organizer = #{organizer},
+        organizer_type = #{organizerType,jdbcType=VARCHAR},
+        representative_image_url = #{representativeImageUrl},
+        submission_email = #{submissionEmail},
+        external_url = #{externalUrl},
+        target_text = #{targetText},
+        target_codes_json = #{targetCodesJson,jdbcType=VARCHAR},
+        region_codes_json = #{regionCodesJson,jdbcType=VARCHAR},
+        required_roles_text = #{requiredRolesText},
+        related_genres_text = #{relatedGenresText},
+        start_at = #{startAt},
+        deadline_at = #{deadlineAt},
+        status = #{status},
+        updated_at = NOW()
+    WHERE contest_id = #{contestId}
+  </update>
+
+  <update id="updateContestStatus">
+    UPDATE contest
+    SET status = #{status},
+        updated_at = NOW()
+    WHERE contest_id = #{contestId}
+  </update>
+
+  <update id="clearContestOpenRequestApprovedContest">
+    UPDATE contest_open_request
+    SET approved_contest_id = NULL,
+        updated_at = NOW()
+    WHERE approved_contest_id = #{contestId}
+  </update>
+
+  <delete id="deleteContestSaves">
+    DELETE FROM contest_save
+    WHERE contest_id = #{contestId}
+  </delete>
+
+  <delete id="deleteContestFitCaches">
+    DELETE FROM contest_fit_cache
+    WHERE contest_id = #{contestId}
+  </delete>
+
+  <delete id="deleteContestPreparations">
+    DELETE FROM contest_submission_prepare
+    WHERE contest_id = #{contestId}
+  </delete>
+
+  <delete id="deleteContestById">
+    DELETE FROM contest
+    WHERE contest_id = #{contestId}
+  </delete>
+
+  <insert id="insertContestOpenRequest" parameterType="map" useGeneratedKeys="true" keyProperty="requestId">
+    INSERT INTO contest_open_request (
+      requester_user_id, contest_type, title, summary, theme, prize_text, total_prize_amount, first_prize_amount, organizer, organizer_type,
+      representative_image_url, representative_image_path, submission_email, external_url,
+      target_text, target_codes_json, region_codes_json,
+      required_roles_text, related_genres_text,
+      start_at, deadline_at, status, created_at
+    ) VALUES (
+      #{requesterUserId}, #{contestType}, #{title}, #{summary}, #{theme}, #{prizeText}, #{totalPrizeAmount,jdbcType=BIGINT}, #{firstPrizeAmount,jdbcType=BIGINT}, #{organizer}, #{organizerType,jdbcType=VARCHAR},
+      #{representativeImageUrl}, NULL, #{submissionEmail}, #{externalUrl},
+      #{targetText}, #{targetCodesJson,jdbcType=VARCHAR}, #{regionCodesJson,jdbcType=VARCHAR},
+      #{requiredRolesText}, #{relatedGenresText},
+      #{startAt}, #{deadlineAt}, 'PENDING', NOW()
+    )
+  </insert>
+
+  <sql id="contestOpenRequestColumns">
+    cor.request_id AS requestId,
+    cor.requester_user_id AS requesterUserId,
+    u.email AS requesterEmail,
+    u.nickname AS requesterNickname,
+    ca.company_name AS companyName,
+    cor.contest_type AS contestType,
+    cor.title,
+    cor.summary,
+    cor.theme,
+    cor.prize_text AS prizeText,
+    cor.total_prize_amount AS totalPrizeAmount,
+    cor.first_prize_amount AS firstPrizeAmount,
+    cor.organizer,
+    cor.organizer_type AS organizerType,
+    cor.representative_image_url AS representativeImageUrl,
+    cor.representative_image_path AS representativeImagePath,
+    CASE WHEN cor.representative_image_path IS NOT NULL THEN CONCAT('/api/media/images/contest_request/', cor.request_id) ELSE NULL END AS requestImageUrl,
+    cor.submission_email AS submissionEmail,
+    cor.external_url AS externalUrl,
+    cor.target_text AS targetText,
+    cor.target_codes_json AS targetCodesJson,
+    cor.region_codes_json AS regionCodesJson,
+    cor.required_roles_text AS requiredRolesText,
+    cor.related_genres_text AS relatedGenresText,
+    cor.start_at AS startAt,
+    cor.deadline_at AS deadlineAt,
+    cor.status,
+    cor.review_reason AS reviewReason,
+    cor.reviewed_by AS reviewedBy,
+    reviewer.nickname AS reviewedByNickname,
+    cor.reviewed_at AS reviewedAt,
+    cor.approved_contest_id AS approvedContestId,
+    cor.created_at AS createdAt,
+    cor.updated_at AS updatedAt
+  </sql>
+
+  <select id="selectOpenRequestsByRequester" resultType="map">
+    SELECT <include refid="contestOpenRequestColumns" />
+    FROM contest_open_request cor
+    JOIN user_account u ON u.user_id = cor.requester_user_id
+    LEFT JOIN company_application ca ON ca.user_id = cor.requester_user_id
+    LEFT JOIN user_account reviewer ON reviewer.user_id = cor.reviewed_by
+    WHERE cor.requester_user_id = #{requesterUserId}
+    ORDER BY cor.created_at DESC
+  </select>
+
+  <select id="selectContestOpenRequests" resultType="map">
+    SELECT <include refid="contestOpenRequestColumns" />
+    FROM contest_open_request cor
+    JOIN user_account u ON u.user_id = cor.requester_user_id
+    LEFT JOIN company_application ca ON ca.user_id = cor.requester_user_id
+    LEFT JOIN user_account reviewer ON reviewer.user_id = cor.reviewed_by
+    WHERE 1 = 1
+      <if test="status != 'ALL'">
+        AND cor.status = #{status}
+      </if>
+    ORDER BY FIELD(cor.status, 'PENDING', 'REJECTED', 'APPROVED'), cor.created_at DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectContestOpenRequestById" resultType="map">
+    SELECT <include refid="contestOpenRequestColumns" />
+    FROM contest_open_request cor
+    JOIN user_account u ON u.user_id = cor.requester_user_id
+    LEFT JOIN company_application ca ON ca.user_id = cor.requester_user_id
+    LEFT JOIN user_account reviewer ON reviewer.user_id = cor.reviewed_by
+    WHERE cor.request_id = #{requestId}
+  </select>
+
+  <update id="updateContestOpenRequestDecision">
+    UPDATE contest_open_request
+    SET status = #{status},
+        review_reason = #{reviewReason},
+        reviewed_by = #{reviewedBy},
+        reviewed_at = NOW(),
+        approved_contest_id = #{approvedContestId,jdbcType=BIGINT},
+        updated_at = NOW()
+    WHERE request_id = #{requestId}
+  </update>
+
+  <update id="clearContestOpenRequestImagePath">
+    UPDATE contest_open_request
+    SET representative_image_path = NULL,
+        updated_at = NOW()
+    WHERE request_id = #{requestId}
+  </update>
+
+  <select id="selectFitCache" resultType="map">
+    SELECT
+      fit_cache_id AS fitCacheId,
+      contest_id AS contestId,
+      basis_type AS basisType,
+      basis_id AS basisId,
+      fit_score AS fitScore,
+      reason_json AS reasonJson,
+      status,
+      calculated_at AS calculatedAt,
+      expires_at AS expiresAt
+    FROM contest_fit_cache
+    WHERE contest_id = #{contestId}
+      AND basis_type = #{basisType}
+      AND basis_id = #{basisId}
+  </select>
+
+  <insert id="upsertFitCache" parameterType="map">
+    INSERT INTO contest_fit_cache (
+      contest_id, basis_type, basis_id, fit_score, reason_json, status, calculated_at, expires_at
+    ) VALUES (
+      #{contestId}, #{basisType}, #{basisId}, #{fitScore}, #{reasonJson}, #{status}, NOW(), DATE_ADD(NOW(), INTERVAL 30 MINUTE)
+    )
+    ON DUPLICATE KEY UPDATE
+      fit_score = VALUES(fit_score),
+      reason_json = VALUES(reason_json),
+      status = VALUES(status),
+      calculated_at = NOW(),
+      expires_at = DATE_ADD(NOW(), INTERVAL 30 MINUTE)
+  </insert>
+
+  <select id="existsContestSave" resultType="int">
+    SELECT COUNT(*)
+    FROM contest_save
+    WHERE contest_id = #{contestId}
+      AND user_id = #{userId}
+  </select>
+
+  <insert id="insertContestSave">
+    INSERT INTO contest_save (contest_id, user_id, created_at)
+    VALUES (#{contestId}, #{userId}, NOW())
+  </insert>
+
+  <delete id="deleteContestSave">
+    DELETE FROM contest_save
+    WHERE contest_id = #{contestId}
+      AND user_id = #{userId}
+  </delete>
+
+  <update id="recountSaveCount">
+    UPDATE contest c
+    SET c.save_count = (
+      SELECT COUNT(*) FROM contest_save cs WHERE cs.contest_id = #{contestId}
+    )
+    WHERE c.contest_id = #{contestId}
+  </update>
+
+  <select id="selectSaveCount" resultType="int">
+    SELECT save_count FROM contest WHERE contest_id = #{contestId}
+  </select>
+
+  <select id="selectProfileBasis" resultType="map">
+    SELECT
+      p.profile_id AS profileId,
+      'PROFILE' AS basisType,
+      p.display_name AS title,
+      p.short_intro AS summary,
+      p.experience_level AS experienceLevel,
+      p.collaboration_status AS collaborationStatus,
+      GROUP_CONCAT(DISTINCT r.name ORDER BY r.sort_order SEPARATOR ', ') AS roleNames,
+      GROUP_CONCAT(DISTINCT g.name ORDER BY g.sort_order SEPARATOR ', ') AS genreNames
+    FROM member_profile p
+    LEFT JOIN profile_role pr ON pr.profile_id = p.profile_id
+    LEFT JOIN `role` r ON r.role_id = pr.role_id
+    LEFT JOIN profile_genre pg ON pg.profile_id = p.profile_id
+    LEFT JOIN genre g ON g.genre_id = pg.genre_id
+    WHERE p.user_id = #{userId}
+      AND p.status = 'ACTIVE'
+      AND p.profile_completed_yn = 'Y'
+    GROUP BY p.profile_id, p.display_name, p.short_intro, p.experience_level, p.collaboration_status
+  </select>
+
+  <select id="selectProfileBasisById" resultType="map">
+    SELECT
+      p.profile_id AS profileId,
+      'PROFILE' AS basisType,
+      p.display_name AS title,
+      p.short_intro AS summary,
+      p.experience_level AS experienceLevel,
+      p.collaboration_status AS collaborationStatus,
+      GROUP_CONCAT(DISTINCT r.name ORDER BY r.sort_order SEPARATOR ', ') AS roleNames,
+      GROUP_CONCAT(DISTINCT g.name ORDER BY g.sort_order SEPARATOR ', ') AS genreNames
+    FROM member_profile p
+    LEFT JOIN profile_role pr ON pr.profile_id = p.profile_id
+    LEFT JOIN `role` r ON r.role_id = pr.role_id
+    LEFT JOIN profile_genre pg ON pg.profile_id = p.profile_id
+    LEFT JOIN genre g ON g.genre_id = pg.genre_id
+    WHERE p.profile_id = #{profileId}
+      AND p.user_id = #{userId}
+      AND p.status = 'ACTIVE'
+      AND p.profile_completed_yn = 'Y'
+    GROUP BY p.profile_id, p.display_name, p.short_intro, p.experience_level, p.collaboration_status
+  </select>
+
+  <select id="selectTeamBases" resultType="map">
+    SELECT
+      t.team_id AS teamId,
+      'TEAM' AS basisType,
+      t.name AS title,
+      t.description AS summary,
+      t.status,
+      t.expected_duration AS expectedDuration,
+      t.current_member_count AS currentMemberCount,
+      t.max_member_count AS maxMemberCount,
+      GROUP_CONCAT(DISTINCT g.name ORDER BY g.sort_order SEPARATOR ', ') AS genreNames,
+      GROUP_CONCAT(DISTINCT r.name ORDER BY r.sort_order SEPARATOR ', ') AS roleNames
+    FROM team_member tm
+    JOIN team t ON t.team_id = tm.team_id
+    LEFT JOIN team_genre tg ON tg.team_id = t.team_id
+    LEFT JOIN genre g ON g.genre_id = tg.genre_id
+    LEFT JOIN team_recruitment tr ON tr.team_id = t.team_id
+    LEFT JOIN team_recruitment_slot s ON s.recruitment_id = tr.recruitment_id
+    LEFT JOIN `role` r ON r.role_id = s.role_id
+    WHERE tm.user_id = #{userId}
+      AND tm.status = 'ACTIVE'
+      AND t.status IN ('RECRUITING', 'IN_PROGRESS', 'RECRUITMENT_CLOSED', 'CLOSING')
+    GROUP BY t.team_id, t.name, t.description, t.status, t.expected_duration, t.current_member_count, t.max_member_count
+    ORDER BY t.last_active_at DESC
+  </select>
+
+  <select id="selectTeamBasisById" resultType="map">
+    SELECT
+      t.team_id AS teamId,
+      'TEAM' AS basisType,
+      t.name AS title,
+      t.description AS summary,
+      t.status,
+      t.expected_duration AS expectedDuration,
+      t.current_member_count AS currentMemberCount,
+      t.max_member_count AS maxMemberCount,
+      GROUP_CONCAT(DISTINCT g.name ORDER BY g.sort_order SEPARATOR ', ') AS genreNames,
+      GROUP_CONCAT(DISTINCT r.name ORDER BY r.sort_order SEPARATOR ', ') AS roleNames
+    FROM team_member tm
+    JOIN team t ON t.team_id = tm.team_id
+    LEFT JOIN team_genre tg ON tg.team_id = t.team_id
+    LEFT JOIN genre g ON g.genre_id = tg.genre_id
+    LEFT JOIN team_recruitment tr ON tr.team_id = t.team_id
+    LEFT JOIN team_recruitment_slot s ON s.recruitment_id = tr.recruitment_id
+    LEFT JOIN `role` r ON r.role_id = s.role_id
+    WHERE tm.user_id = #{userId}
+      AND tm.status = 'ACTIVE'
+      AND t.team_id = #{teamId}
+    GROUP BY t.team_id, t.name, t.description, t.status, t.expected_duration, t.current_member_count, t.max_member_count
+  </select>
+
+  <select id="selectPreparation" resultType="map">
+    SELECT
+      prepare_id AS prepareId,
+      contest_id AS contestId,
+      user_id AS userId,
+      basis_type AS basisType,
+      basis_id AS basisId,
+      checklist_json AS checklistJson,
+      memo,
+      click_count AS clickCount,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM contest_submission_prepare
+    WHERE contest_id = #{contestId}
+      AND user_id = #{userId}
+      AND basis_type = #{basisType}
+      AND basis_id = #{basisId}
+  </select>
+
+  <insert id="upsertPreparation" parameterType="map">
+    INSERT INTO contest_submission_prepare (
+      contest_id, user_id, basis_type, basis_id, checklist_json, memo, click_count, created_at
+    ) VALUES (
+      #{contestId}, #{userId}, #{basisType}, #{basisId}, #{checklistJson}, #{memo}, 1, NOW()
+    )
+    ON DUPLICATE KEY UPDATE
+      checklist_json = VALUES(checklist_json),
+      memo = VALUES(memo),
+      click_count = click_count + 1,
+      updated_at = NOW()
+  </insert>
+</mapper>

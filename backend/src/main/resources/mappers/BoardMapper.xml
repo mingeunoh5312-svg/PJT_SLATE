@@ -1,0 +1,925 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.boards.BoardMapper">
+
+  <sql id="postColumns">
+    p.post_id AS postId,
+    p.author_user_id AS authorUserId,
+    u.nickname AS authorNickname,
+    u.account_type AS authorAccountType,
+    p.category,
+    CASE WHEN p.category = 'FREE' THEN COALESCE(p.free_category, 'FREE') ELSE NULL END AS freeCategory,
+    p.title,
+    p.content,
+    p.status,
+    p.visibility,
+    p.like_count AS likeCount,
+    p.review_count AS reviewCount,
+    p.view_count AS viewCount,
+    ROUND((p.like_count * 2) + (p.review_count * 5) + (p.view_count * 0.1), 1) AS reactionScore,
+    CASE
+      WHEN #{userId} IS NULL THEN 0
+      WHEN EXISTS (
+        SELECT 1 FROM board_like bl
+        WHERE bl.post_id = p.post_id
+          AND bl.user_id = #{userId}
+          AND bl.active_yn = 'Y'
+      ) THEN 1
+      ELSE 0
+    END AS likedByCurrentUser,
+    wi.work_id AS workId,
+    wi.media_type AS mediaType,
+    COALESCE(wi.work_type, 'OTHER') AS workType,
+    (
+      SELECT wg.genre_id
+      FROM work_genre wg
+      WHERE wg.work_id = wi.work_id
+      ORDER BY wg.sort_order, wg.genre_id
+      LIMIT 1
+    ) AS primaryGenreId,
+    (
+      SELECT g.name
+      FROM work_genre wg
+      JOIN genre g ON g.genre_id = wg.genre_id
+      WHERE wg.work_id = wi.work_id
+      ORDER BY wg.sort_order, wg.genre_id
+      LIMIT 1
+    ) AS primaryGenreName,
+    wi.youtube_url AS youtubeUrl,
+    wi.youtube_video_id AS youtubeVideoId,
+    wi.youtube_title AS youtubeTitle,
+    wi.youtube_channel_title AS youtubeChannelTitle,
+    wi.youtube_thumbnail_url AS youtubeThumbnailUrl,
+    CASE WHEN wi.representative_image_path IS NOT NULL THEN CONCAT('/api/media/images/work/', p.post_id) ELSE NULL END AS representativeImageUrl,
+    wi.youtube_duration_seconds AS youtubeDurationSeconds,
+    wi.file_id AS fileId,
+    fm.original_name AS fileOriginalName,
+    fm.content_type AS fileContentType,
+    fm.size_bytes AS fileSizeBytes,
+    fm.duration_seconds AS fileDurationSeconds,
+    wi.team_id AS workTeamId,
+    t.name AS workTeamName,
+    p.created_at AS createdAt,
+    p.updated_at AS updatedAt
+  </sql>
+
+  <sql id="visiblePostCondition">
+    p.deleted_at IS NULL
+    AND p.status = 'PUBLISHED'
+    <if test="!admin">
+      AND (
+        p.visibility = 'PUBLIC'
+        <if test="userId != null">
+          OR p.author_user_id = #{userId}
+        </if>
+      )
+    </if>
+  </sql>
+
+  <select id="selectPosts" resultType="map">
+    SELECT <include refid="postColumns" />
+    FROM board_post p
+    JOIN user_account u ON u.user_id = p.author_user_id
+    LEFT JOIN work_item wi ON wi.board_post_id = p.post_id AND wi.status = 'PUBLISHED'
+    LEFT JOIN file_metadata fm ON fm.file_id = wi.file_id AND fm.status = 'ACTIVE'
+    LEFT JOIN team t ON t.team_id = wi.team_id
+    WHERE <include refid="visiblePostCondition" />
+      AND p.category = #{category}
+      <if test="keyword != null and keyword != ''">
+        AND (
+          p.title LIKE CONCAT('%', #{keyword}, '%')
+          OR p.content LIKE CONCAT('%', #{keyword}, '%')
+          OR wi.title LIKE CONCAT('%', #{keyword}, '%')
+          OR wi.description LIKE CONCAT('%', #{keyword}, '%')
+          OR wi.youtube_title LIKE CONCAT('%', #{keyword}, '%')
+          OR wi.youtube_channel_title LIKE CONCAT('%', #{keyword}, '%')
+          OR wi.youtube_video_id LIKE CONCAT('%', #{keyword}, '%')
+          OR u.nickname LIKE CONCAT('%', #{keyword}, '%')
+          OR t.name LIKE CONCAT('%', #{keyword}, '%')
+        )
+      </if>
+      <if test="freeCategory != null and freeCategory != ''">
+        AND COALESCE(p.free_category, 'FREE') = #{freeCategory}
+      </if>
+      <if test="workType != null and workType != ''">
+        AND COALESCE(wi.work_type, 'OTHER') = #{workType}
+      </if>
+      <if test="genreId != null">
+        AND EXISTS (
+          SELECT 1
+          FROM work_genre wgf
+          WHERE wgf.work_id = wi.work_id
+            AND wgf.genre_id = #{genreId}
+        )
+      </if>
+    ORDER BY
+      <choose>
+        <when test="sort == 'latest'">p.created_at DESC, p.post_id DESC</when>
+        <when test="sort == 'likes'">p.like_count DESC, p.created_at DESC, p.post_id DESC</when>
+        <when test="sort == 'views'">p.view_count DESC, p.created_at DESC, p.post_id DESC</when>
+        <otherwise>reactionScore DESC, p.created_at DESC, p.post_id DESC</otherwise>
+      </choose>
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectMyWorks" resultType="map">
+    SELECT <include refid="postColumns" />
+    FROM board_post p
+    JOIN user_account u ON u.user_id = p.author_user_id
+    LEFT JOIN work_item wi ON wi.board_post_id = p.post_id AND wi.status = 'PUBLISHED'
+    LEFT JOIN file_metadata fm ON fm.file_id = wi.file_id AND fm.status = 'ACTIVE'
+    LEFT JOIN team t ON t.team_id = wi.team_id
+    WHERE p.deleted_at IS NULL
+      AND p.status = 'PUBLISHED'
+      AND (p.visibility = 'PUBLIC' OR p.author_user_id = #{userId})
+      AND p.category = 'WORK'
+      AND (
+        p.author_user_id = #{userId}
+        OR EXISTS (
+          SELECT 1
+          FROM team_member tm
+          WHERE tm.team_id = wi.team_id
+            AND tm.user_id = #{userId}
+            AND tm.status = 'ACTIVE'
+        )
+      )
+    ORDER BY p.created_at DESC, p.post_id DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectPostById" resultType="map">
+    SELECT <include refid="postColumns" />
+    FROM board_post p
+    JOIN user_account u ON u.user_id = p.author_user_id
+    LEFT JOIN work_item wi ON wi.board_post_id = p.post_id AND wi.status = 'PUBLISHED'
+    LEFT JOIN file_metadata fm ON fm.file_id = wi.file_id AND fm.status = 'ACTIVE'
+    LEFT JOIN team t ON t.team_id = wi.team_id
+    WHERE p.post_id = #{postId}
+      AND <include refid="visiblePostCondition" />
+  </select>
+
+  <select id="selectPostForModeration" resultType="map">
+    SELECT
+      p.post_id AS postId,
+      p.author_user_id AS authorUserId,
+      u.nickname AS authorNickname,
+      u.email AS authorEmail,
+      p.category,
+      CASE WHEN p.category = 'FREE' THEN COALESCE(p.free_category, 'FREE') ELSE NULL END AS freeCategory,
+      p.title,
+      p.content,
+      p.status,
+      p.visibility,
+      p.like_count AS likeCount,
+      p.review_count AS reviewCount,
+      p.view_count AS viewCount,
+      p.created_at AS createdAt,
+      p.updated_at AS updatedAt,
+      p.deleted_at AS deletedAt
+    FROM board_post p
+    JOIN user_account u ON u.user_id = p.author_user_id
+    WHERE p.post_id = #{postId}
+  </select>
+
+  <sql id="adminPostListColumns">
+    p.post_id AS postId,
+    p.author_user_id AS authorUserId,
+    u.nickname AS authorNickname,
+    u.email AS authorEmail,
+    u.account_type AS authorAccountType,
+    p.category,
+    CASE WHEN p.category = 'FREE' THEN COALESCE(p.free_category, 'FREE') ELSE NULL END AS freeCategory,
+    (
+      SELECT COALESCE(wi.work_type, 'OTHER')
+      FROM work_item wi
+      WHERE wi.board_post_id = p.post_id
+      LIMIT 1
+    ) AS workType,
+    p.title,
+    p.status,
+    p.visibility,
+    p.like_count AS likeCount,
+    p.review_count AS reviewCount,
+    p.view_count AS viewCount,
+    (
+      SELECT COUNT(*)
+      FROM content_report cr
+      WHERE cr.target_type = 'BOARD_POST'
+        AND cr.target_id = p.post_id
+    ) AS reportCount,
+    (
+      SELECT COUNT(*)
+      FROM content_report cr
+      WHERE cr.target_type = 'BOARD_POST'
+        AND cr.target_id = p.post_id
+        AND cr.status = 'PENDING'
+    ) AS pendingReportCount,
+    p.created_at AS createdAt,
+    p.updated_at AS updatedAt,
+    p.deleted_at AS deletedAt
+  </sql>
+
+  <sql id="adminPostDetailColumns">
+    <include refid="adminPostListColumns" />,
+    p.content,
+    (
+      SELECT COUNT(*)
+      FROM board_review br
+      WHERE br.post_id = p.post_id
+        AND br.status = 'PUBLISHED'
+        AND br.deleted_at IS NULL
+    ) AS publishedReviewCount
+  </sql>
+
+  <sql id="adminPostFilter">
+    <if test="keyword != null and keyword != ''">
+      AND (
+        p.title LIKE CONCAT('%', #{keyword}, '%')
+        OR p.content LIKE CONCAT('%', #{keyword}, '%')
+        OR u.nickname LIKE CONCAT('%', #{keyword}, '%')
+        OR u.email LIKE CONCAT('%', #{keyword}, '%')
+      )
+    </if>
+    <if test="category != null and category != ''">
+      AND p.category = #{category}
+    </if>
+    <if test="status != null and status != ''">
+      AND p.status = #{status}
+    </if>
+    <if test="visibility != null and visibility != ''">
+      AND p.visibility = #{visibility}
+    </if>
+    <if test="authorUserId != null">
+      AND p.author_user_id = #{authorUserId}
+    </if>
+  </sql>
+
+  <select id="selectAdminPosts" resultType="map">
+    SELECT <include refid="adminPostListColumns" />
+    FROM board_post p
+    JOIN user_account u ON u.user_id = p.author_user_id
+    WHERE 1 = 1
+      <include refid="adminPostFilter" />
+    ORDER BY p.created_at DESC, p.post_id DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectAdminPostById" resultType="map">
+    SELECT <include refid="adminPostDetailColumns" />
+    FROM board_post p
+    JOIN user_account u ON u.user_id = p.author_user_id
+    WHERE p.post_id = #{postId}
+  </select>
+
+  <insert id="insertPost" parameterType="map" useGeneratedKeys="true" keyProperty="postId">
+    INSERT INTO board_post (
+      author_user_id, category, free_category, title, content, status, visibility, like_count, review_count, view_count, created_at
+    ) VALUES (
+      #{authorUserId}, #{category}, #{freeCategory,jdbcType=VARCHAR}, #{title}, #{content}, #{status}, #{visibility}, 0, 0, 0, NOW()
+    )
+  </insert>
+
+  <update id="updatePost" parameterType="map">
+    UPDATE board_post
+    SET category = #{category},
+        free_category = #{freeCategory,jdbcType=VARCHAR},
+        title = #{title},
+        content = #{content},
+        visibility = #{visibility},
+        updated_at = NOW()
+    WHERE post_id = #{postId}
+      AND deleted_at IS NULL
+  </update>
+
+  <update id="updatePostAsAdmin" parameterType="map">
+    UPDATE board_post
+    SET category = #{category},
+        free_category = #{freeCategory,jdbcType=VARCHAR},
+        title = #{title},
+        content = #{content},
+        visibility = #{visibility},
+        status = #{status},
+        updated_at = NOW()
+    WHERE post_id = #{postId}
+  </update>
+
+  <update id="updatePostStatusAsAdmin">
+    UPDATE board_post
+    SET status = #{status},
+        updated_at = NOW()
+    WHERE post_id = #{postId}
+      AND deleted_at IS NULL
+  </update>
+
+  <update id="softDeletePost">
+    UPDATE board_post
+    SET status = #{status},
+        deleted_at = NOW(),
+        updated_at = NOW()
+    WHERE post_id = #{postId}
+      AND deleted_at IS NULL
+  </update>
+
+  <update id="restorePostAsAdmin">
+    UPDATE board_post
+    SET status = 'PUBLISHED',
+        deleted_at = NULL,
+        updated_at = NOW()
+    WHERE post_id = #{postId}
+  </update>
+
+  <update id="blindPost">
+    UPDATE board_post
+    SET status = 'BLINDED',
+        updated_at = NOW()
+    WHERE post_id = #{postId}
+      AND status = 'PUBLISHED'
+      AND deleted_at IS NULL
+  </update>
+
+  <select id="selectWorkByPostId" resultType="map">
+    SELECT
+      wi.work_id AS workId,
+      wi.owner_user_id AS ownerUserId,
+      owner.nickname AS ownerNickname,
+      wi.team_id AS teamId,
+      t.name AS teamName,
+      wi.board_post_id AS boardPostId,
+      wi.file_id AS fileId,
+      fm.original_name AS fileOriginalName,
+      fm.content_type AS fileContentType,
+      fm.size_bytes AS fileSizeBytes,
+      fm.duration_seconds AS fileDurationSeconds,
+      wi.title,
+      wi.description,
+      wi.media_type AS mediaType,
+      COALESCE(wi.work_type, 'OTHER') AS workType,
+      (
+        SELECT wg.genre_id
+        FROM work_genre wg
+        WHERE wg.work_id = wi.work_id
+        ORDER BY wg.sort_order, wg.genre_id
+        LIMIT 1
+      ) AS primaryGenreId,
+      (
+        SELECT g.name
+        FROM work_genre wg
+        JOIN genre g ON g.genre_id = wg.genre_id
+        WHERE wg.work_id = wi.work_id
+        ORDER BY wg.sort_order, wg.genre_id
+        LIMIT 1
+      ) AS primaryGenreName,
+      wi.youtube_url AS youtubeUrl,
+      wi.youtube_video_id AS youtubeVideoId,
+      wi.youtube_title AS youtubeTitle,
+      wi.youtube_channel_title AS youtubeChannelTitle,
+      wi.youtube_thumbnail_url AS youtubeThumbnailUrl,
+      CASE WHEN wi.representative_image_path IS NOT NULL THEN CONCAT('/api/media/images/work/', wi.board_post_id) ELSE NULL END AS representativeImageUrl,
+      wi.youtube_duration_seconds AS youtubeDurationSeconds,
+      wi.visibility,
+      wi.status,
+      wi.created_at AS createdAt,
+      wi.updated_at AS updatedAt
+    FROM work_item wi
+    JOIN user_account owner ON owner.user_id = wi.owner_user_id
+    LEFT JOIN team t ON t.team_id = wi.team_id
+    LEFT JOIN file_metadata fm ON fm.file_id = wi.file_id AND fm.status = 'ACTIVE'
+    WHERE wi.board_post_id = #{postId}
+      AND wi.status = 'PUBLISHED'
+    LIMIT 1
+  </select>
+
+  <insert id="insertWork" parameterType="map" useGeneratedKeys="true" keyProperty="workId">
+    INSERT INTO work_item (
+      owner_user_id, team_id, board_post_id, file_id, title, description, media_type, work_type, youtube_url,
+      youtube_video_id, youtube_title, youtube_channel_title, youtube_thumbnail_url, youtube_duration_seconds,
+      visibility, status, created_at
+    ) VALUES (
+      #{ownerUserId}, #{teamId}, #{boardPostId}, #{fileId,jdbcType=BIGINT}, #{title}, #{description}, #{mediaType}, #{workType}, #{youtubeUrl,jdbcType=VARCHAR},
+      #{youtubeVideoId,jdbcType=VARCHAR}, #{youtubeTitle,jdbcType=VARCHAR}, #{youtubeChannelTitle,jdbcType=VARCHAR},
+      #{youtubeThumbnailUrl,jdbcType=VARCHAR}, #{youtubeDurationSeconds,jdbcType=INTEGER},
+      #{visibility}, #{status}, NOW()
+    )
+  </insert>
+
+  <update id="updateWork" parameterType="map">
+    UPDATE work_item
+    SET team_id = #{teamId},
+        file_id = #{fileId,jdbcType=BIGINT},
+        title = #{title},
+        description = #{description},
+        media_type = #{mediaType},
+        work_type = #{workType},
+        youtube_url = #{youtubeUrl,jdbcType=VARCHAR},
+        youtube_video_id = #{youtubeVideoId,jdbcType=VARCHAR},
+        youtube_title = #{youtubeTitle,jdbcType=VARCHAR},
+        youtube_channel_title = #{youtubeChannelTitle,jdbcType=VARCHAR},
+        youtube_thumbnail_url = #{youtubeThumbnailUrl,jdbcType=VARCHAR},
+        youtube_duration_seconds = #{youtubeDurationSeconds,jdbcType=INTEGER},
+        visibility = #{visibility},
+        status = #{status},
+        updated_at = NOW()
+    WHERE work_id = #{workId}
+  </update>
+
+  <update id="updateWorkTypeByPostId">
+    UPDATE work_item
+    SET work_type = #{workType},
+        updated_at = NOW()
+    WHERE board_post_id = #{postId}
+  </update>
+
+  <select id="countActiveGenres" resultType="int">
+    SELECT COUNT(*)
+    FROM genre
+    WHERE active_yn = 'Y'
+      AND genre_id IN
+      <foreach collection="genreIds" item="genreId" open="(" separator="," close=")">
+        #{genreId}
+      </foreach>
+  </select>
+
+  <insert id="insertWorkGenre">
+    INSERT INTO work_genre (work_id, genre_id, sort_order)
+    VALUES (#{workId}, #{genreId}, #{sortOrder})
+  </insert>
+
+  <delete id="deleteWorkGenres">
+    DELETE FROM work_genre
+    WHERE work_id = #{workId}
+  </delete>
+
+  <select id="selectWorkGenresByWorkId" resultType="map">
+    SELECT
+      g.genre_id AS genreId,
+      g.name,
+      wg.sort_order AS sortOrder
+    FROM work_genre wg
+    JOIN genre g ON g.genre_id = wg.genre_id
+    WHERE wg.work_id = #{workId}
+    ORDER BY wg.sort_order, g.sort_order, g.genre_id
+  </select>
+
+  <update id="softDeleteWorkByPostId">
+    UPDATE work_item
+    SET status = 'DELETED',
+        updated_at = NOW()
+    WHERE board_post_id = #{postId}
+  </update>
+
+  <update id="restoreWorkByPostId">
+    UPDATE work_item
+    SET status = 'PUBLISHED',
+        updated_at = NOW()
+    WHERE board_post_id = #{postId}
+      AND status = 'DELETED'
+  </update>
+
+  <sql id="teamWorkRequestColumns">
+    twr.request_id AS requestId,
+    twr.team_id AS teamId,
+    t.name AS teamName,
+    twr.requester_user_id AS requesterUserId,
+    requester.nickname AS requesterNickname,
+    requester.email AS requesterEmail,
+    twr.file_id AS fileId,
+    fm.original_name AS fileOriginalName,
+    fm.content_type AS fileContentType,
+    fm.size_bytes AS fileSizeBytes,
+    fm.duration_seconds AS fileDurationSeconds,
+    twr.board_post_id AS boardPostId,
+    twr.work_id AS workId,
+    twr.title,
+    twr.content,
+    twr.media_type AS mediaType,
+    COALESCE(twr.work_type, 'OTHER') AS workType,
+    twr.youtube_url AS youtubeUrl,
+    twr.youtube_video_id AS youtubeVideoId,
+    twr.youtube_title AS youtubeTitle,
+    twr.youtube_channel_title AS youtubeChannelTitle,
+    twr.youtube_thumbnail_url AS youtubeThumbnailUrl,
+    twr.youtube_duration_seconds AS youtubeDurationSeconds,
+    twr.visibility,
+    twr.status,
+    twr.reject_reason AS rejectReason,
+    twr.decided_by AS decidedBy,
+    decider.nickname AS decidedByNickname,
+    twr.decided_at AS decidedAt,
+    twr.created_at AS createdAt,
+    twr.updated_at AS updatedAt
+  </sql>
+
+  <select id="selectTeamWorkRequestsByRequester" resultType="map">
+    SELECT <include refid="teamWorkRequestColumns" />
+    FROM team_work_approval_request twr
+    JOIN team t ON t.team_id = twr.team_id
+    JOIN user_account requester ON requester.user_id = twr.requester_user_id
+    LEFT JOIN user_account decider ON decider.user_id = twr.decided_by
+    LEFT JOIN file_metadata fm ON fm.file_id = twr.file_id
+    WHERE twr.requester_user_id = #{userId}
+    ORDER BY FIELD(twr.status, 'PENDING', 'APPROVED', 'REJECTED', 'CANCELED'), twr.created_at DESC
+    LIMIT 50
+  </select>
+
+  <select id="selectTeamWorkRequestsByTeam" resultType="map">
+    SELECT <include refid="teamWorkRequestColumns" />
+    FROM team_work_approval_request twr
+    JOIN team t ON t.team_id = twr.team_id
+    JOIN user_account requester ON requester.user_id = twr.requester_user_id
+    LEFT JOIN user_account decider ON decider.user_id = twr.decided_by
+    LEFT JOIN file_metadata fm ON fm.file_id = twr.file_id
+    WHERE twr.team_id = #{teamId}
+    ORDER BY FIELD(twr.status, 'PENDING', 'APPROVED', 'REJECTED', 'CANCELED'), twr.created_at DESC
+    LIMIT 50
+  </select>
+
+  <select id="selectTeamWorkRequestById" resultType="map">
+    SELECT <include refid="teamWorkRequestColumns" />
+    FROM team_work_approval_request twr
+    JOIN team t ON t.team_id = twr.team_id
+    JOIN user_account requester ON requester.user_id = twr.requester_user_id
+    LEFT JOIN user_account decider ON decider.user_id = twr.decided_by
+    LEFT JOIN file_metadata fm ON fm.file_id = twr.file_id
+    WHERE twr.request_id = #{requestId}
+  </select>
+
+  <select id="countTeamWorkRequestByFile" resultType="int">
+    SELECT COUNT(*)
+    FROM team_work_approval_request
+    WHERE file_id = #{fileId}
+      AND status IN ('PENDING', 'APPROVED')
+  </select>
+
+  <insert id="insertTeamWorkRequest" parameterType="map" useGeneratedKeys="true" keyProperty="requestId">
+    INSERT INTO team_work_approval_request (
+      team_id, requester_user_id, file_id, title, content, media_type, work_type,
+      youtube_url, youtube_video_id, youtube_title, youtube_channel_title, youtube_thumbnail_url, youtube_duration_seconds,
+      visibility, status, created_at
+    ) VALUES (
+      #{teamId}, #{requesterUserId}, #{fileId,jdbcType=BIGINT}, #{title}, #{content}, #{mediaType}, #{workType},
+      #{youtubeUrl,jdbcType=VARCHAR}, #{youtubeVideoId,jdbcType=VARCHAR}, #{youtubeTitle,jdbcType=VARCHAR},
+      #{youtubeChannelTitle,jdbcType=VARCHAR}, #{youtubeThumbnailUrl,jdbcType=VARCHAR},
+      #{youtubeDurationSeconds,jdbcType=INTEGER}, #{visibility}, 'PENDING', NOW()
+    )
+  </insert>
+
+  <insert id="insertTeamWorkApprovalGenre">
+    INSERT INTO team_work_approval_genre (request_id, genre_id, sort_order)
+    VALUES (#{requestId}, #{genreId}, #{sortOrder})
+  </insert>
+
+  <select id="selectTeamWorkApprovalGenres" resultType="map">
+    SELECT
+      twag.genre_id AS genreId,
+      g.name,
+      twag.sort_order AS sortOrder
+    FROM team_work_approval_genre twag
+    JOIN genre g ON g.genre_id = twag.genre_id
+    WHERE twag.request_id = #{requestId}
+    ORDER BY twag.sort_order, g.sort_order, g.genre_id
+  </select>
+
+  <update id="decideTeamWorkRequest" parameterType="map">
+    UPDATE team_work_approval_request
+    SET status = #{status},
+        reject_reason = #{rejectReason,jdbcType=VARCHAR},
+        decided_by = #{decidedBy},
+        decided_at = NOW(),
+        board_post_id = #{boardPostId,jdbcType=BIGINT},
+        work_id = #{workId,jdbcType=BIGINT},
+        updated_at = NOW()
+    WHERE request_id = #{requestId}
+      AND status = 'PENDING'
+  </update>
+
+  <select id="selectReviewsByPostId" resultType="map">
+    SELECT
+      br.review_id AS reviewId,
+      br.post_id AS postId,
+      br.author_user_id AS authorUserId,
+      u.nickname AS authorNickname,
+      br.parent_review_id AS parentReviewId,
+      CASE
+        WHEN br.status = 'PUBLISHED' THEN br.content
+        ELSE br.delete_display_text
+      END AS content,
+      br.status,
+      EXISTS (
+        SELECT 1 FROM board_review child
+        WHERE child.parent_review_id = br.review_id
+          AND child.status = 'PUBLISHED'
+          AND child.deleted_at IS NULL
+      ) AS hasReplies,
+      br.created_at AS createdAt,
+      br.updated_at AS updatedAt
+    FROM board_review br
+    JOIN user_account u ON u.user_id = br.author_user_id
+    WHERE br.post_id = #{postId}
+    ORDER BY COALESCE(br.parent_review_id, br.review_id), br.parent_review_id IS NOT NULL, br.created_at
+  </select>
+
+  <select id="selectReviewById" resultType="map">
+    SELECT
+      br.review_id AS reviewId,
+      br.post_id AS postId,
+      br.author_user_id AS authorUserId,
+      u.nickname AS authorNickname,
+      br.parent_review_id AS parentReviewId,
+      CASE
+        WHEN br.status = 'PUBLISHED' THEN br.content
+        ELSE br.delete_display_text
+      END AS content,
+      br.status,
+      br.created_at AS createdAt,
+      br.updated_at AS updatedAt
+    FROM board_review br
+    JOIN user_account u ON u.user_id = br.author_user_id
+    WHERE br.review_id = #{reviewId}
+  </select>
+
+  <select id="selectReviewForModeration" resultType="map">
+    SELECT
+      br.review_id AS reviewId,
+      br.post_id AS postId,
+      br.author_user_id AS authorUserId,
+      u.nickname AS authorNickname,
+      u.email AS authorEmail,
+      br.parent_review_id AS parentReviewId,
+      br.content,
+      br.status,
+      br.delete_display_text AS deleteDisplayText,
+      br.created_at AS createdAt,
+      br.updated_at AS updatedAt,
+      br.deleted_at AS deletedAt
+    FROM board_review br
+    JOIN user_account u ON u.user_id = br.author_user_id
+    WHERE br.review_id = #{reviewId}
+  </select>
+
+  <insert id="insertReview" parameterType="map" useGeneratedKeys="true" keyProperty="reviewId">
+    INSERT INTO board_review (
+      post_id, author_user_id, parent_review_id, content, status, created_at
+    ) VALUES (
+      #{postId}, #{authorUserId}, #{parentReviewId}, #{content}, #{status}, NOW()
+    )
+  </insert>
+
+  <update id="updateReview">
+    UPDATE board_review
+    SET content = #{content},
+        updated_at = NOW()
+    WHERE review_id = #{reviewId}
+      AND status = 'PUBLISHED'
+      AND deleted_at IS NULL
+  </update>
+
+  <update id="softDeleteReview">
+    UPDATE board_review
+    SET status = #{status},
+        delete_display_text = #{deleteDisplayText},
+        deleted_at = NOW(),
+        updated_at = NOW()
+    WHERE review_id = #{reviewId}
+      AND status = 'PUBLISHED'
+      AND deleted_at IS NULL
+  </update>
+
+  <update id="blindReview">
+    UPDATE board_review
+    SET status = 'BLINDED',
+        delete_display_text = #{displayText},
+        updated_at = NOW()
+    WHERE review_id = #{reviewId}
+      AND status = 'PUBLISHED'
+      AND deleted_at IS NULL
+  </update>
+
+  <select id="countReviewReplies" resultType="int">
+    SELECT COUNT(*)
+    FROM board_review
+    WHERE parent_review_id = #{reviewId}
+      AND status = 'PUBLISHED'
+      AND deleted_at IS NULL
+  </select>
+
+  <select id="selectLikeActiveYn" resultType="string">
+    SELECT active_yn
+    FROM board_like
+    WHERE post_id = #{postId}
+      AND user_id = #{userId}
+  </select>
+
+  <insert id="insertLike">
+    INSERT INTO board_like (post_id, user_id, active_yn, created_at)
+    VALUES (#{postId}, #{userId}, 'Y', NOW())
+  </insert>
+
+  <update id="updateLike">
+    UPDATE board_like
+    SET active_yn = #{activeYn},
+        updated_at = NOW()
+    WHERE post_id = #{postId}
+      AND user_id = #{userId}
+  </update>
+
+  <select id="selectLikeCount" resultType="int">
+    SELECT like_count
+    FROM board_post
+    WHERE post_id = #{postId}
+  </select>
+
+  <update id="recountLikeCount">
+    UPDATE board_post p
+    SET p.like_count = (
+      SELECT COUNT(*)
+      FROM board_like bl
+      WHERE bl.post_id = #{postId}
+        AND bl.active_yn = 'Y'
+    )
+    WHERE p.post_id = #{postId}
+  </update>
+
+  <update id="recountReviewCount">
+    UPDATE board_post p
+    SET p.review_count = (
+      SELECT COUNT(*)
+      FROM board_review br
+      WHERE br.post_id = #{postId}
+        AND br.status = 'PUBLISHED'
+        AND br.deleted_at IS NULL
+    )
+    WHERE p.post_id = #{postId}
+  </update>
+
+  <select id="countRecentView" resultType="int">
+    SELECT COUNT(*)
+    FROM board_view_log
+    WHERE post_id = #{postId}
+      AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+      <choose>
+        <when test="userId != null">
+          AND viewer_user_id = #{userId}
+        </when>
+        <otherwise>
+          AND viewer_user_id IS NULL
+          AND ip_hash = #{ipHash}
+        </otherwise>
+      </choose>
+  </select>
+
+  <insert id="insertViewLog">
+    INSERT INTO board_view_log (post_id, viewer_user_id, ip_hash, view_window_start, created_at)
+    VALUES (#{postId}, #{userId}, #{ipHash}, #{viewWindowStart}, NOW())
+  </insert>
+
+  <update id="incrementViewCount">
+    UPDATE board_post
+    SET view_count = view_count + 1
+    WHERE post_id = #{postId}
+  </update>
+
+  <select id="selectWorkRanking" resultType="map">
+    SELECT
+      p.post_id AS postId,
+      p.title,
+      u.nickname AS authorNickname,
+      wi.work_id AS workId,
+      wi.media_type AS mediaType,
+      COALESCE(wi.work_type, 'OTHER') AS workType,
+      (
+        SELECT wg.genre_id
+        FROM work_genre wg
+        WHERE wg.work_id = wi.work_id
+        ORDER BY wg.sort_order, wg.genre_id
+        LIMIT 1
+      ) AS primaryGenreId,
+      (
+        SELECT g.name
+        FROM work_genre wg
+        JOIN genre g ON g.genre_id = wg.genre_id
+        WHERE wg.work_id = wi.work_id
+        ORDER BY wg.sort_order, wg.genre_id
+        LIMIT 1
+      ) AS primaryGenreName,
+      wi.youtube_url AS youtubeUrl,
+      wi.youtube_video_id AS youtubeVideoId,
+      wi.youtube_title AS youtubeTitle,
+      wi.youtube_channel_title AS youtubeChannelTitle,
+      wi.youtube_thumbnail_url AS youtubeThumbnailUrl,
+      CASE WHEN wi.representative_image_path IS NOT NULL THEN CONCAT('/api/media/images/work/', p.post_id) ELSE NULL END AS representativeImageUrl,
+      wi.youtube_duration_seconds AS youtubeDurationSeconds,
+      p.like_count AS likeCount,
+      p.review_count AS reviewCount,
+      p.view_count AS viewCount,
+      ROUND((p.like_count * 2) + (p.review_count * 5) + (p.view_count * 0.1), 1) AS reactionScore,
+      CASE
+        WHEN #{currentUserId} IS NULL THEN 0
+        WHEN EXISTS (
+          SELECT 1 FROM board_like bl
+          WHERE bl.post_id = p.post_id
+            AND bl.user_id = #{currentUserId}
+            AND bl.active_yn = 'Y'
+        ) THEN 1
+        ELSE 0
+      END AS likedByCurrentUser
+    FROM board_post p
+    JOIN user_account u ON u.user_id = p.author_user_id
+    LEFT JOIN work_item wi ON wi.board_post_id = p.post_id AND wi.status = 'PUBLISHED'
+    LEFT JOIN file_metadata fm ON fm.file_id = wi.file_id AND fm.status = 'ACTIVE'
+    WHERE p.category = 'WORK'
+      AND p.status = 'PUBLISHED'
+      AND p.visibility = 'PUBLIC'
+      AND p.deleted_at IS NULL
+      <if test="workType != null and workType != ''">
+        AND COALESCE(wi.work_type, 'OTHER') = #{workType}
+      </if>
+      <if test="genreId != null">
+        AND EXISTS (
+          SELECT 1 FROM work_genre wgf
+          WHERE wgf.work_id = wi.work_id
+            AND wgf.genre_id = #{genreId}
+        )
+      </if>
+      <if test="period == 'WEEKLY_WORK'">
+        AND p.created_at &gt;= DATE_SUB(NOW(), INTERVAL 7 DAY)
+      </if>
+      <if test="period == 'MONTHLY_WORK'">
+        AND p.created_at &gt;= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      </if>
+    ORDER BY p.like_count DESC, p.created_at DESC, p.post_id DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectPopularProfileRanking" resultType="map">
+    SELECT
+      mp.profile_id AS profileId,
+      mp.user_id AS userId,
+      mp.display_name AS displayName,
+      mp.short_intro AS shortIntro,
+      CASE WHEN mp.profile_image_path IS NOT NULL THEN CONCAT('/api/media/images/profile/', mp.profile_id) ELSE NULL END AS profileImageUrl,
+      rg.public_display_name AS publicRegionName,
+      (
+        SELECT r.name
+        FROM profile_role pr
+        JOIN `role` r ON r.role_id = pr.role_id
+        WHERE pr.profile_id = mp.profile_id
+        ORDER BY pr.sort_order, r.sort_order, r.role_id
+        LIMIT 1
+      ) AS primaryRoleName,
+      COUNT(follower_profile.profile_id) AS followerCount,
+      CASE
+        WHEN #{currentUserId} IS NULL OR #{currentUserId} = mp.user_id THEN FALSE
+        WHEN EXISTS (
+          SELECT 1
+          FROM user_follow current_follow
+          WHERE current_follow.follower_user_id = #{currentUserId}
+            AND current_follow.following_user_id = mp.user_id
+        ) THEN TRUE ELSE FALSE
+      END AS followingByCurrentUser
+    FROM member_profile mp
+    JOIN user_account target_user ON target_user.user_id = mp.user_id
+    JOIN region rg ON rg.region_id = mp.region_id
+    LEFT JOIN user_follow uf ON uf.following_user_id = mp.user_id
+    LEFT JOIN user_account follower_user
+      ON follower_user.user_id = uf.follower_user_id
+     AND follower_user.account_type = 'USER'
+     AND follower_user.account_status = 'ACTIVE'
+    LEFT JOIN member_profile follower_profile
+      ON follower_profile.user_id = follower_user.user_id
+     AND follower_profile.status = 'ACTIVE'
+     AND follower_profile.visibility = 'PUBLIC'
+     AND follower_profile.profile_completed_yn = 'Y'
+     AND follower_profile.activity_status = 'VISIBLE'
+    WHERE mp.visibility = 'PUBLIC'
+      AND mp.status = 'ACTIVE'
+      AND mp.profile_completed_yn = 'Y'
+      AND mp.activity_status = 'VISIBLE'
+      AND target_user.account_type = 'USER'
+      AND target_user.account_status = 'ACTIVE'
+    GROUP BY mp.profile_id, mp.user_id, mp.display_name, mp.short_intro, mp.profile_image_path,
+             rg.public_display_name, mp.last_active_at
+    ORDER BY followerCount DESC, mp.last_active_at DESC, mp.profile_id DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectPopularTeamRanking" resultType="map">
+    SELECT
+      t.team_id AS teamId,
+      t.name,
+      t.description,
+      rg.public_display_name AS publicRegionName,
+      COUNT(ta.application_id) AS applicationCount
+    FROM team t
+    LEFT JOIN region rg ON rg.region_id = t.region_id
+    LEFT JOIN team_application ta
+      ON ta.team_id = t.team_id
+     AND ta.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    WHERE t.status IN ('RECRUITING', 'IN_PROGRESS', 'RECRUITMENT_CLOSED')
+    GROUP BY t.team_id, t.name, t.description, rg.public_display_name
+    ORDER BY applicationCount DESC, t.last_active_at DESC
+    LIMIT #{limit}
+  </select>
+</mapper>

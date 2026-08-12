@@ -1,0 +1,500 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.profiles.ProfileMapper">
+
+  <resultMap id="portfolioItemResultMap" type="map" autoMapping="true">
+    <result property="verified" column="verified" javaType="java.lang.Boolean" />
+  </resultMap>
+
+  <sql id="profileColumns">
+    p.profile_id AS profileId,
+    p.user_id AS userId,
+    u.nickname,
+    u.email,
+    p.display_name AS displayName,
+    p.short_intro AS shortIntro,
+    p.detail_intro AS detailIntro,
+    CASE WHEN p.profile_image_path IS NOT NULL THEN CONCAT('/api/media/images/profile/', p.profile_id) ELSE NULL END AS profileImageUrl,
+    p.visibility,
+    p.activity_status AS activityStatus,
+    p.region_id AS regionId,
+    rg.public_display_name AS publicRegionName,
+    rg.sido_name AS sidoName,
+    rg.sigungu_name AS sigunguName,
+    rg.dong_name AS dongName,
+    rg.center_lat AS centerLat,
+    rg.center_lng AS centerLng,
+    p.experience_level AS experienceLevel,
+    p.join_availability AS joinAvailability,
+    p.collaboration_status AS collaborationStatus,
+    p.travel_range AS travelRange,
+    p.preferred_duration AS preferredDuration,
+    p.equipment_status AS equipmentStatus,
+    p.age_band AS ageBand,
+    p.participation_mode AS participationMode,
+    p.profile_completed_yn AS profileCompletedYn,
+    p.status,
+    p.last_active_at AS lastActiveAt,
+    p.created_at AS createdAt,
+    p.updated_at AS updatedAt,
+    p.deleted_at AS deletedAt
+  </sql>
+
+  <select id="selectProfileByUserId" resultType="map">
+    SELECT <include refid="profileColumns" />
+    FROM member_profile p
+    JOIN user_account u ON u.user_id = p.user_id
+    JOIN region rg ON rg.region_id = p.region_id
+    WHERE p.user_id = #{userId}
+      AND p.status = 'ACTIVE'
+  </select>
+
+  <select id="selectAnyProfileByUserId" resultType="map">
+    SELECT <include refid="profileColumns" />
+    FROM member_profile p
+    JOIN user_account u ON u.user_id = p.user_id
+    JOIN region rg ON rg.region_id = p.region_id
+    WHERE p.user_id = #{userId}
+  </select>
+
+  <select id="selectProfileById" resultType="map">
+    SELECT <include refid="profileColumns" />
+    FROM member_profile p
+    JOIN user_account u ON u.user_id = p.user_id
+    JOIN region rg ON rg.region_id = p.region_id
+    WHERE p.profile_id = #{profileId}
+      AND p.status = 'ACTIVE'
+  </select>
+
+  <select id="selectPublicProfileById" resultType="map">
+    SELECT <include refid="profileColumns" />
+    FROM member_profile p
+    JOIN user_account u ON u.user_id = p.user_id
+    JOIN region rg ON rg.region_id = p.region_id
+    WHERE p.profile_id = #{profileId}
+      AND p.status = 'ACTIVE'
+      AND p.visibility = 'PUBLIC'
+      AND p.profile_completed_yn = 'Y'
+      AND p.activity_status = 'VISIBLE'
+      AND p.deleted_at IS NULL
+      AND u.account_type = 'USER'
+      AND u.account_status = 'ACTIVE'
+  </select>
+
+  <select id="selectProfileRoles" resultType="map">
+    SELECT
+      r.role_id AS roleId,
+      r.name AS roleName,
+      rc.role_category_id AS roleCategoryId,
+      rc.name AS roleCategoryName,
+      pr.sort_order AS sortOrder
+    FROM profile_role pr
+    JOIN `role` r ON r.role_id = pr.role_id
+    JOIN role_category rc ON rc.role_category_id = r.role_category_id
+    WHERE pr.profile_id = #{profileId}
+    ORDER BY pr.sort_order, rc.sort_order, r.sort_order
+  </select>
+
+  <select id="selectProfileGenres" resultType="map">
+    SELECT g.genre_id AS genreId, g.name
+    FROM profile_genre pg
+    JOIN genre g ON g.genre_id = pg.genre_id
+    WHERE pg.profile_id = #{profileId}
+    ORDER BY g.sort_order
+  </select>
+
+  <select id="selectProfileConditions" resultType="map">
+    SELECT
+      pcc.condition_code AS conditionCode,
+      COALESCE(c.display_name, pcc.condition_code) AS displayName
+    FROM profile_collaboration_condition pcc
+    LEFT JOIN common_code c
+      ON c.code_group = 'COLLABORATION_CONDITION'
+     AND c.code = pcc.condition_code
+    WHERE pcc.profile_id = #{profileId}
+    ORDER BY c.sort_order, pcc.condition_code
+  </select>
+
+  <select id="selectPortfolioItems" resultMap="portfolioItemResultMap">
+    SELECT
+      pi.portfolio_item_id AS portfolioItemId,
+      pi.profile_id AS profileId,
+      pi.public_data_sync_item_id AS publicDataSyncItemId,
+      pi.title,
+      pi.role_name AS roleName,
+      pi.credit_name AS creditName,
+      pi.description,
+      pi.source_type AS sourceType,
+      pi.external_source_name AS externalSourceName,
+      pi.external_reference_id AS externalReferenceId,
+      pi.url,
+      pi.thumbnail_url AS thumbnailUrl,
+      CASE WHEN pi.thumbnail_image_path IS NOT NULL THEN CONCAT('/api/media/images/portfolio/', pi.portfolio_item_id) ELSE NULL END AS uploadedThumbnailUrl,
+      pi.sort_order AS sortOrder,
+      pi.status,
+      pi.created_at AS createdAt,
+      pi.updated_at AS updatedAt,
+      CASE WHEN pv.verification_status = 'VERIFIED' THEN TRUE ELSE FALSE END AS verified,
+      pv.verification_status AS verificationStatus,
+      pv.provider,
+      pv.provider_movie_code AS providerMovieCode,
+      pv.provider_movie_title AS providerMovieTitle,
+      pv.provider_movie_title_en AS providerMovieTitleEn,
+      pv.provider_movie_year AS providerMovieYear,
+      pv.provider_open_date AS providerOpenDate,
+      pv.provider_genres AS providerGenres,
+      pv.provider_person_name AS providerPersonName,
+      pv.provider_person_name_en AS providerPersonNameEn,
+      pv.provider_role_name AS providerRoleName,
+      pv.provider_role_name AS matchedRoleName,
+      pv.matched_role_group AS matchedRoleGroup,
+      pv.matched_source AS matchedSource
+    FROM portfolio_item pi
+    LEFT JOIN portfolio_verification pv ON pv.portfolio_item_id = pi.portfolio_item_id
+    WHERE pi.profile_id = #{profileId}
+      AND pi.status = 'ACTIVE'
+    ORDER BY pi.sort_order ASC, pi.created_at DESC
+  </select>
+
+  <select id="selectPortfolioItemById" resultMap="portfolioItemResultMap">
+    SELECT
+      pi.portfolio_item_id AS portfolioItemId,
+      pi.profile_id AS profileId,
+      pi.public_data_sync_item_id AS publicDataSyncItemId,
+      pi.title,
+      pi.role_name AS roleName,
+      pi.credit_name AS creditName,
+      pi.description,
+      pi.source_type AS sourceType,
+      pi.external_source_name AS externalSourceName,
+      pi.external_reference_id AS externalReferenceId,
+      pi.url,
+      pi.thumbnail_url AS thumbnailUrl,
+      CASE WHEN pi.thumbnail_image_path IS NOT NULL THEN CONCAT('/api/media/images/portfolio/', pi.portfolio_item_id) ELSE NULL END AS uploadedThumbnailUrl,
+      pi.sort_order AS sortOrder,
+      pi.status,
+      pi.created_at AS createdAt,
+      pi.updated_at AS updatedAt,
+      CASE WHEN pv.verification_status = 'VERIFIED' THEN TRUE ELSE FALSE END AS verified,
+      pv.verification_status AS verificationStatus,
+      pv.provider,
+      pv.provider_movie_code AS providerMovieCode,
+      pv.provider_movie_title AS providerMovieTitle,
+      pv.provider_movie_title_en AS providerMovieTitleEn,
+      pv.provider_movie_year AS providerMovieYear,
+      pv.provider_open_date AS providerOpenDate,
+      pv.provider_genres AS providerGenres,
+      pv.provider_person_name AS providerPersonName,
+      pv.provider_person_name_en AS providerPersonNameEn,
+      pv.provider_role_name AS providerRoleName,
+      pv.provider_role_name AS matchedRoleName,
+      pv.matched_role_group AS matchedRoleGroup,
+      pv.matched_source AS matchedSource
+    FROM portfolio_item pi
+    LEFT JOIN portfolio_verification pv ON pv.portfolio_item_id = pi.portfolio_item_id
+    WHERE pi.portfolio_item_id = #{portfolioItemId}
+  </select>
+
+  <select id="selectOwnedPortfolioItem" resultMap="portfolioItemResultMap">
+    SELECT
+      pi.portfolio_item_id AS portfolioItemId,
+      pi.profile_id AS profileId,
+      pi.public_data_sync_item_id AS publicDataSyncItemId,
+      pi.title,
+      pi.role_name AS roleName,
+      pi.credit_name AS creditName,
+      pi.description,
+      pi.source_type AS sourceType,
+      pi.external_source_name AS externalSourceName,
+      pi.external_reference_id AS externalReferenceId,
+      pi.url,
+      pi.thumbnail_url AS thumbnailUrl,
+      CASE WHEN pi.thumbnail_image_path IS NOT NULL THEN CONCAT('/api/media/images/portfolio/', pi.portfolio_item_id) ELSE NULL END AS uploadedThumbnailUrl,
+      pi.sort_order AS sortOrder,
+      pi.status,
+      pi.created_at AS createdAt,
+      pi.updated_at AS updatedAt,
+      CASE WHEN pv.verification_status = 'VERIFIED' THEN TRUE ELSE FALSE END AS verified,
+      pv.verification_status AS verificationStatus,
+      pv.provider,
+      pv.provider_movie_code AS providerMovieCode,
+      pv.provider_movie_title AS providerMovieTitle,
+      pv.provider_movie_title_en AS providerMovieTitleEn,
+      pv.provider_movie_year AS providerMovieYear,
+      pv.provider_open_date AS providerOpenDate,
+      pv.provider_genres AS providerGenres,
+      pv.provider_person_name AS providerPersonName,
+      pv.provider_person_name_en AS providerPersonNameEn,
+      pv.provider_role_name AS providerRoleName,
+      pv.provider_role_name AS matchedRoleName,
+      pv.matched_role_group AS matchedRoleGroup,
+      pv.matched_source AS matchedSource
+    FROM portfolio_item pi
+    LEFT JOIN portfolio_verification pv ON pv.portfolio_item_id = pi.portfolio_item_id
+    JOIN member_profile p ON p.profile_id = pi.profile_id
+    WHERE pi.portfolio_item_id = #{portfolioItemId}
+      AND p.user_id = #{userId}
+      AND pi.status = 'ACTIVE'
+  </select>
+
+  <select id="selectPortfolioVerificationByItemId" resultType="map">
+    SELECT
+      verification_id AS verificationId,
+      portfolio_item_id AS portfolioItemId,
+      provider,
+      provider_movie_code AS providerMovieCode,
+      provider_movie_title AS providerMovieTitle,
+      provider_movie_title_en AS providerMovieTitleEn,
+      provider_movie_year AS providerMovieYear,
+      provider_open_date AS providerOpenDate,
+      provider_genres AS providerGenres,
+      provider_person_name AS providerPersonName,
+      provider_person_name_en AS providerPersonNameEn,
+      provider_role_name AS providerRoleName,
+      matched_role_group AS matchedRoleGroup,
+      matched_source AS matchedSource,
+      verification_status AS verificationStatus,
+      raw_response_json AS rawResponseJson,
+      checked_at AS checkedAt,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM portfolio_verification
+    WHERE portfolio_item_id = #{portfolioItemId}
+  </select>
+
+  <select id="countActivePortfolioItems" resultType="int">
+    SELECT COUNT(*)
+    FROM portfolio_item
+    WHERE profile_id = #{profileId}
+      AND status = 'ACTIVE'
+  </select>
+
+  <select id="selectPublicDataItems" resultType="map">
+    SELECT
+      public_data_sync_item_id AS publicDataSyncItemId,
+      source_name AS sourceName,
+      item_type AS itemType,
+      external_id AS externalId,
+      title,
+      description,
+      provider_url AS providerUrl,
+      display_year AS displayYear,
+      creator_name AS creatorName,
+      raw_json AS rawJson,
+      synced_at AS syncedAt
+    FROM public_data_sync_item
+    WHERE active_yn = 'Y'
+    <if test="itemType != null and itemType != ''">
+      AND item_type = #{itemType}
+    </if>
+    <if test="keyword != null and keyword != ''">
+      AND (
+        title LIKE CONCAT('%', #{keyword}, '%')
+        OR creator_name LIKE CONCAT('%', #{keyword}, '%')
+        OR external_id LIKE CONCAT('%', #{keyword}, '%')
+        OR source_name LIKE CONCAT('%', #{keyword}, '%')
+      )
+    </if>
+    ORDER BY synced_at DESC, public_data_sync_item_id DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectPublicDataItemById" resultType="map">
+    SELECT
+      public_data_sync_item_id AS publicDataSyncItemId,
+      source_name AS sourceName,
+      item_type AS itemType,
+      external_id AS externalId,
+      title,
+      description,
+      provider_url AS providerUrl,
+      display_year AS displayYear,
+      creator_name AS creatorName,
+      raw_json AS rawJson,
+      synced_at AS syncedAt
+    FROM public_data_sync_item
+    WHERE public_data_sync_item_id = #{publicDataSyncItemId}
+      AND active_yn = 'Y'
+  </select>
+
+  <insert id="insertProfile" parameterType="map" useGeneratedKeys="true" keyProperty="profileId">
+    INSERT INTO member_profile (
+      user_id, display_name, short_intro, detail_intro, visibility, activity_status, region_id,
+      experience_level, join_availability, collaboration_status, travel_range, preferred_duration,
+      equipment_status, age_band, participation_mode, profile_completed_yn, last_active_at, created_at
+    ) VALUES (
+      #{userId}, #{displayName}, #{shortIntro}, #{detailIntro}, #{visibility}, #{activityStatus}, #{regionId},
+      #{experienceLevel}, #{joinAvailability}, #{collaborationStatus}, #{travelRange}, #{preferredDuration},
+      #{equipmentStatus}, #{ageBand}, #{participationMode}, #{profileCompletedYn}, NOW(), NOW()
+    )
+  </insert>
+
+  <update id="updateProfile" parameterType="map">
+    UPDATE member_profile
+    SET display_name = #{displayName},
+        short_intro = #{shortIntro},
+        detail_intro = #{detailIntro},
+        visibility = #{visibility},
+        activity_status = #{activityStatus},
+        region_id = #{regionId},
+        experience_level = #{experienceLevel},
+        join_availability = #{joinAvailability},
+        collaboration_status = #{collaborationStatus},
+        travel_range = #{travelRange},
+        preferred_duration = #{preferredDuration},
+        equipment_status = #{equipmentStatus},
+        age_band = #{ageBand},
+        participation_mode = #{participationMode},
+        profile_completed_yn = #{profileCompletedYn},
+        status = 'ACTIVE',
+        last_active_at = NOW(),
+        deleted_at = NULL,
+        updated_at = NOW()
+    WHERE profile_id = #{profileId}
+      AND user_id = #{userId}
+      AND status = 'ACTIVE'
+  </update>
+
+  <update id="softDeleteProfile">
+    UPDATE member_profile
+    SET visibility = 'PRIVATE',
+        activity_status = 'HIDDEN',
+        profile_completed_yn = 'N',
+        status = 'DELETED',
+        deleted_at = NOW(),
+        updated_at = NOW()
+    WHERE profile_id = #{profileId}
+      AND user_id = #{userId}
+      AND status = 'ACTIVE'
+  </update>
+
+  <update id="reactivateProfile" parameterType="map">
+    UPDATE member_profile
+    SET display_name = #{displayName},
+        short_intro = #{shortIntro},
+        detail_intro = #{detailIntro},
+        visibility = #{visibility},
+        activity_status = #{activityStatus},
+        region_id = #{regionId},
+        experience_level = #{experienceLevel},
+        join_availability = #{joinAvailability},
+        collaboration_status = #{collaborationStatus},
+        travel_range = #{travelRange},
+        preferred_duration = #{preferredDuration},
+        equipment_status = #{equipmentStatus},
+        age_band = #{ageBand},
+        participation_mode = #{participationMode},
+        profile_completed_yn = #{profileCompletedYn},
+        status = 'ACTIVE',
+        last_active_at = NOW(),
+        deleted_at = NULL,
+        updated_at = NOW()
+    WHERE profile_id = #{profileId}
+      AND user_id = #{userId}
+      AND status = 'DELETED'
+  </update>
+
+  <insert id="insertPortfolioItem" parameterType="map" useGeneratedKeys="true" keyProperty="portfolioItemId">
+    INSERT INTO portfolio_item (
+      profile_id, public_data_sync_item_id, title, role_name, credit_name, description, source_type,
+      external_source_name, external_reference_id, url, thumbnail_url, sort_order, status, created_at
+    ) VALUES (
+      #{profileId}, #{publicDataSyncItemId}, #{title}, #{roleName}, #{creditName}, #{description}, #{sourceType},
+      #{externalSourceName}, #{externalReferenceId}, #{url}, #{thumbnailUrl}, #{sortOrder}, 'ACTIVE', NOW()
+    )
+  </insert>
+
+  <update id="updatePortfolioItem" parameterType="map">
+    UPDATE portfolio_item
+    SET public_data_sync_item_id = #{publicDataSyncItemId},
+        title = #{title},
+        role_name = #{roleName},
+        credit_name = #{creditName},
+        description = #{description},
+        source_type = #{sourceType},
+        external_source_name = #{externalSourceName},
+        external_reference_id = #{externalReferenceId},
+        url = #{url},
+        thumbnail_url = #{thumbnailUrl},
+        sort_order = #{sortOrder},
+        updated_at = NOW()
+    WHERE portfolio_item_id = #{portfolioItemId}
+      AND profile_id = #{profileId}
+      AND status = 'ACTIVE'
+  </update>
+
+  <update id="deletePortfolioItem">
+    UPDATE portfolio_item pi
+    JOIN member_profile p ON p.profile_id = pi.profile_id
+    SET pi.status = 'DELETED',
+        pi.deleted_at = NOW(),
+        pi.updated_at = NOW()
+    WHERE pi.portfolio_item_id = #{portfolioItemId}
+      AND p.user_id = #{userId}
+      AND pi.status = 'ACTIVE'
+  </update>
+
+  <insert id="upsertPortfolioVerification" parameterType="map">
+    INSERT INTO portfolio_verification (
+      portfolio_item_id, provider, provider_movie_code, provider_movie_title, provider_movie_title_en,
+      provider_movie_year, provider_open_date, provider_genres, provider_person_name, provider_person_name_en,
+      provider_role_name, matched_role_group, matched_source, verification_status, raw_response_json, checked_at, created_at
+    ) VALUES (
+      #{portfolioItemId}, #{provider}, #{providerMovieCode}, #{providerMovieTitle}, #{providerMovieTitleEn},
+      #{providerMovieYear}, #{providerOpenDate}, #{providerGenres}, #{providerPersonName}, #{providerPersonNameEn},
+      #{providerRoleName}, #{matchedRoleGroup}, #{matchedSource}, #{verificationStatus}, #{rawResponseJson}, NOW(), NOW()
+    )
+    ON DUPLICATE KEY UPDATE
+      provider = VALUES(provider),
+      provider_movie_code = VALUES(provider_movie_code),
+      provider_movie_title = VALUES(provider_movie_title),
+      provider_movie_title_en = VALUES(provider_movie_title_en),
+      provider_movie_year = VALUES(provider_movie_year),
+      provider_open_date = VALUES(provider_open_date),
+      provider_genres = VALUES(provider_genres),
+      provider_person_name = VALUES(provider_person_name),
+      provider_person_name_en = VALUES(provider_person_name_en),
+      provider_role_name = VALUES(provider_role_name),
+      matched_role_group = VALUES(matched_role_group),
+      matched_source = VALUES(matched_source),
+      verification_status = VALUES(verification_status),
+      raw_response_json = VALUES(raw_response_json),
+      checked_at = NOW(),
+      updated_at = NOW()
+  </insert>
+
+  <delete id="deletePortfolioVerification">
+    DELETE FROM portfolio_verification
+    WHERE portfolio_item_id = #{portfolioItemId}
+  </delete>
+
+  <delete id="deleteProfileRoles">
+    DELETE FROM profile_role WHERE profile_id = #{profileId}
+  </delete>
+
+  <insert id="insertProfileRole">
+    INSERT INTO profile_role (profile_id, role_id, sort_order)
+    VALUES (#{profileId}, #{roleId}, #{sortOrder})
+  </insert>
+
+  <delete id="deleteProfileGenres">
+    DELETE FROM profile_genre WHERE profile_id = #{profileId}
+  </delete>
+
+  <insert id="insertProfileGenre">
+    INSERT INTO profile_genre (profile_id, genre_id)
+    VALUES (#{profileId}, #{genreId})
+  </insert>
+
+  <delete id="deleteProfileConditions">
+    DELETE FROM profile_collaboration_condition WHERE profile_id = #{profileId}
+  </delete>
+
+  <insert id="insertProfileCondition">
+    INSERT INTO profile_collaboration_condition (profile_id, condition_code)
+    VALUES (#{profileId}, #{conditionCode})
+  </insert>
+</mapper>

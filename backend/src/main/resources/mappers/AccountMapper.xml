@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.accounts.AccountMapper">
+
+  <sql id="accountColumns">
+    u.user_id AS userId,
+    u.login_id AS loginId,
+    u.email,
+    u.password_hash AS passwordHash,
+    u.nickname,
+    u.phone,
+    u.account_type AS accountType,
+    u.account_status AS accountStatus,
+    u.last_login_at AS lastLoginAt,
+    u.created_at AS createdAt,
+    u.deactivated_at AS deactivatedAt,
+    ca.company_application_id AS companyApplicationId,
+    ca.status AS companyApplicationStatus,
+    ca.company_name AS companyName,
+    ca.review_reason AS reviewReason
+  </sql>
+
+  <select id="selectAccountByLoginId" resultType="map">
+    SELECT <include refid="accountColumns" />
+    FROM user_account u
+    LEFT JOIN company_application ca ON ca.user_id = u.user_id
+    WHERE u.login_id = #{loginId}
+  </select>
+
+  <select id="selectAccountByEmail" resultType="map">
+    SELECT <include refid="accountColumns" />
+    FROM user_account u
+    LEFT JOIN company_application ca ON ca.user_id = u.user_id
+    WHERE u.email = #{email}
+  </select>
+
+  <select id="selectAccountById" resultType="map">
+    SELECT <include refid="accountColumns" />
+    FROM user_account u
+    LEFT JOIN company_application ca ON ca.user_id = u.user_id
+    WHERE u.user_id = #{userId}
+  </select>
+
+  <sql id="adminUserColumns">
+    u.user_id AS userId,
+    u.login_id AS loginId,
+    u.email,
+    u.nickname,
+    u.phone,
+    u.account_type AS accountType,
+    u.account_status AS accountStatus,
+    u.last_login_at AS lastLoginAt,
+    u.created_at AS createdAt,
+    u.updated_at AS updatedAt,
+    u.deactivated_at AS deactivatedAt,
+    us.sanction_id AS activeSanctionId,
+    us.sanction_type AS activeSanctionType,
+    us.reason AS activeSanctionReason,
+    us.sanction_until AS activeSanctionUntil,
+    us.created_at AS activeSanctionCreatedAt
+  </sql>
+
+  <sql id="adminUserFilter">
+    <if test="keyword != null and keyword != ''">
+      AND (
+        u.login_id LIKE CONCAT('%', #{keyword}, '%')
+        OR u.nickname LIKE CONCAT('%', #{keyword}, '%')
+        OR u.phone LIKE CONCAT('%', #{keyword}, '%')
+        OR CAST(u.user_id AS CHAR) = #{keyword}
+      )
+    </if>
+    <if test="accountType != null and accountType != ''">
+      AND u.account_type = #{accountType}
+    </if>
+    <if test="accountStatus != null and accountStatus != ''">
+      AND u.account_status = #{accountStatus}
+    </if>
+  </sql>
+
+  <select id="selectAdminUsers" resultType="map">
+    SELECT <include refid="adminUserColumns" />
+    FROM user_account u
+    LEFT JOIN user_sanction us
+      ON us.user_id = u.user_id
+     AND us.status = 'ACTIVE'
+    WHERE 1 = 1
+      <include refid="adminUserFilter" />
+    ORDER BY FIELD(u.account_status, 'TEMP_SUSPENDED', 'PERM_SUSPENDED', 'WITHDRAWN', 'PENDING_APPROVAL', 'ACTIVE'), u.created_at DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectAdminUserById" resultType="map">
+    SELECT <include refid="adminUserColumns" />
+    FROM user_account u
+    LEFT JOIN user_sanction us
+      ON us.user_id = u.user_id
+     AND us.status = 'ACTIVE'
+    WHERE u.user_id = #{userId}
+  </select>
+
+  <insert id="insertAccount" parameterType="map" useGeneratedKeys="true" keyProperty="userId">
+    INSERT INTO user_account (login_id, email, password_hash, nickname, phone, account_type, account_status, created_at)
+    VALUES (#{loginId}, #{email}, #{passwordHash}, #{nickname}, #{phone}, #{accountType}, #{accountStatus}, NOW())
+  </insert>
+
+  <update id="updateLastLoginAt">
+    UPDATE user_account
+    SET last_login_at = NOW()
+    WHERE user_id = #{userId}
+  </update>
+
+  <update id="updateCurrentAccount">
+    UPDATE user_account
+    SET nickname = #{nickname},
+        email = #{email},
+        <if test="passwordHash != null and passwordHash != ''">
+        password_hash = #{passwordHash},
+        </if>
+        updated_at = NOW()
+    WHERE user_id = #{userId}
+      AND account_status = 'ACTIVE'
+  </update>
+
+  <update id="withdrawCurrentAccount">
+    UPDATE user_account
+    SET account_status = 'WITHDRAWN',
+        deactivated_at = NOW(),
+        updated_at = NOW()
+    WHERE user_id = #{userId}
+      AND account_status = 'ACTIVE'
+  </update>
+
+  <insert id="insertCompanyApplication" parameterType="map" useGeneratedKeys="true" keyProperty="companyApplicationId">
+    INSERT INTO company_application (
+      user_id, company_name, business_registration_no, manager_name, manager_phone,
+      company_intro, public_data_company_name, status, created_at
+    ) VALUES (
+      #{userId}, #{companyName}, #{businessRegistrationNo}, #{managerName}, #{managerPhone},
+      #{companyIntro}, #{publicDataCompanyName}, 'PENDING', NOW()
+    )
+  </insert>
+
+  <select id="selectCompanyApplications" resultType="map">
+    SELECT
+      ca.company_application_id AS companyApplicationId,
+      ca.user_id AS userId,
+      u.email,
+      u.nickname,
+      u.account_status AS accountStatus,
+      ca.company_name AS companyName,
+      ca.business_registration_no AS businessRegistrationNo,
+      ca.manager_name AS managerName,
+      ca.manager_phone AS managerPhone,
+      ca.company_intro AS companyIntro,
+      ca.public_data_company_name AS publicDataCompanyName,
+      ca.status,
+      ca.review_reason AS reviewReason,
+      reviewer.nickname AS reviewedByNickname,
+      ca.reviewed_at AS reviewedAt,
+      ca.created_at AS createdAt,
+      (
+        SELECT COUNT(*)
+        FROM company_application_document cad
+        WHERE cad.company_application_id = ca.company_application_id
+          AND cad.status = 'ACTIVE'
+      ) AS documentCount,
+      (
+        SELECT MAX(cad.uploaded_at)
+        FROM company_application_document cad
+        WHERE cad.company_application_id = ca.company_application_id
+          AND cad.status = 'ACTIVE'
+      ) AS latestDocumentAt
+    FROM company_application ca
+    JOIN user_account u ON u.user_id = ca.user_id
+    LEFT JOIN user_account reviewer ON reviewer.user_id = ca.reviewed_by
+    ORDER BY FIELD(ca.status, 'PENDING', 'REJECTED', 'APPROVED'), ca.created_at DESC
+  </select>
+
+  <select id="selectCompanyApplicationById" resultType="map">
+    SELECT
+      ca.company_application_id AS companyApplicationId,
+      ca.user_id AS userId,
+      u.email,
+      u.nickname,
+      u.account_status AS accountStatus,
+      ca.company_name AS companyName,
+      ca.business_registration_no AS businessRegistrationNo,
+      ca.manager_name AS managerName,
+      ca.manager_phone AS managerPhone,
+      ca.company_intro AS companyIntro,
+      ca.public_data_company_name AS publicDataCompanyName,
+      ca.status,
+      ca.review_reason AS reviewReason,
+      ca.reviewed_by AS reviewedBy,
+      ca.reviewed_at AS reviewedAt,
+      ca.created_at AS createdAt
+    FROM company_application ca
+    JOIN user_account u ON u.user_id = ca.user_id
+    WHERE ca.company_application_id = #{applicationId}
+  </select>
+
+  <select id="selectCompanyApplicationByUserId" resultType="map">
+    SELECT
+      ca.company_application_id AS companyApplicationId,
+      ca.user_id AS userId,
+      u.email,
+      u.nickname,
+      u.account_status AS accountStatus,
+      ca.company_name AS companyName,
+      ca.business_registration_no AS businessRegistrationNo,
+      ca.manager_name AS managerName,
+      ca.manager_phone AS managerPhone,
+      ca.company_intro AS companyIntro,
+      ca.public_data_company_name AS publicDataCompanyName,
+      ca.status,
+      ca.review_reason AS reviewReason,
+      ca.reviewed_by AS reviewedBy,
+      ca.reviewed_at AS reviewedAt,
+      ca.created_at AS createdAt
+    FROM company_application ca
+    JOIN user_account u ON u.user_id = ca.user_id
+    WHERE ca.user_id = #{userId}
+  </select>
+
+  <insert id="insertCompanyApplicationDocument" parameterType="map" useGeneratedKeys="true" keyProperty="documentId">
+    INSERT INTO company_application_document (
+      company_application_id, uploader_user_id, document_type, original_name,
+      stored_path, content_type, size_bytes, status, uploaded_at
+    ) VALUES (
+      #{companyApplicationId}, #{uploaderUserId}, #{documentType}, #{originalName},
+      #{storedPath}, #{contentType}, #{sizeBytes}, 'ACTIVE', NOW()
+    )
+  </insert>
+
+  <select id="selectCompanyApplicationDocuments" resultType="map">
+    SELECT
+      cad.document_id AS documentId,
+      cad.company_application_id AS companyApplicationId,
+      cad.uploader_user_id AS uploaderUserId,
+      uploader.nickname AS uploaderNickname,
+      uploader.email AS uploaderEmail,
+      cad.document_type AS documentType,
+      cad.original_name AS originalName,
+      cad.stored_path AS storedPath,
+      cad.content_type AS contentType,
+      cad.size_bytes AS sizeBytes,
+      cad.status,
+      cad.uploaded_at AS uploadedAt,
+      cad.deleted_at AS deletedAt
+    FROM company_application_document cad
+    JOIN user_account uploader ON uploader.user_id = cad.uploader_user_id
+    WHERE cad.company_application_id = #{applicationId}
+      AND cad.status = 'ACTIVE'
+    ORDER BY cad.uploaded_at DESC, cad.document_id DESC
+  </select>
+
+  <select id="selectCompanyApplicationDocumentById" resultType="map">
+    SELECT
+      cad.document_id AS documentId,
+      cad.company_application_id AS companyApplicationId,
+      ca.user_id AS companyUserId,
+      ca.company_name AS companyName,
+      ca.business_registration_no AS businessRegistrationNo,
+      cad.uploader_user_id AS uploaderUserId,
+      uploader.nickname AS uploaderNickname,
+      uploader.email AS uploaderEmail,
+      cad.document_type AS documentType,
+      cad.original_name AS originalName,
+      cad.stored_path AS storedPath,
+      cad.content_type AS contentType,
+      cad.size_bytes AS sizeBytes,
+      cad.status,
+      cad.uploaded_at AS uploadedAt,
+      cad.deleted_at AS deletedAt
+    FROM company_application_document cad
+    JOIN company_application ca ON ca.company_application_id = cad.company_application_id
+    JOIN user_account uploader ON uploader.user_id = cad.uploader_user_id
+    WHERE cad.document_id = #{documentId}
+  </select>
+
+  <update id="softDeleteCompanyApplicationDocument">
+    UPDATE company_application_document
+    SET status = 'DELETED',
+        deleted_at = NOW()
+    WHERE document_id = #{documentId}
+      AND status = 'ACTIVE'
+  </update>
+
+  <select id="countActiveCompanyApplicationDocuments" resultType="int">
+    SELECT COUNT(*)
+    FROM company_application_document
+    WHERE company_application_id = #{applicationId}
+      AND status = 'ACTIVE'
+  </select>
+
+  <update id="updateCompanyApplicationDecision">
+    UPDATE company_application
+    SET status = #{status},
+        review_reason = #{reason},
+        reviewed_by = #{reviewedBy},
+        reviewed_at = NOW(),
+        updated_at = NOW()
+    WHERE company_application_id = #{applicationId}
+  </update>
+
+  <update id="updateAccountStatus">
+    UPDATE user_account
+    SET account_status = #{accountStatus},
+        updated_at = NOW()
+    WHERE user_id = #{userId}
+  </update>
+
+  <update id="updateAdminUser" parameterType="map">
+    UPDATE user_account
+    SET nickname = #{nickname},
+        phone = #{phone,jdbcType=VARCHAR},
+        account_type = #{accountType},
+        account_status = #{accountStatus},
+        deactivated_at = CASE
+          WHEN #{deactivated} THEN COALESCE(deactivated_at, NOW())
+          WHEN #{accountStatus} = 'ACTIVE' THEN NULL
+          ELSE deactivated_at
+        END,
+        updated_at = NOW()
+    WHERE user_id = #{userId}
+  </update>
+
+  <update id="deactivateAdminUser">
+    UPDATE user_account
+    SET account_status = #{accountStatus},
+        deactivated_at = NOW(),
+        updated_at = NOW()
+    WHERE user_id = #{userId}
+  </update>
+
+  <update id="restoreAdminUser">
+    UPDATE user_account
+    SET account_status = 'ACTIVE',
+        deactivated_at = NULL,
+        updated_at = NOW()
+    WHERE user_id = #{userId}
+  </update>
+</mapper>

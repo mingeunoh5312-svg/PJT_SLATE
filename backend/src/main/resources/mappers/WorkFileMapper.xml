@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.boards.WorkFileMapper">
+
+  <insert id="insertFileMetadata" parameterType="map" useGeneratedKeys="true" keyProperty="fileId">
+    INSERT INTO file_metadata (
+      uploader_user_id, team_id, original_name, stored_path, content_type,
+      size_bytes, duration_seconds, status, created_at
+    ) VALUES (
+      #{uploaderUserId}, #{teamId,jdbcType=BIGINT}, #{originalName}, #{storedPath}, #{contentType},
+      #{sizeBytes}, #{durationSeconds,jdbcType=INTEGER}, 'ACTIVE', NOW()
+    )
+  </insert>
+
+  <select id="selectFileById" resultType="map">
+    SELECT
+      f.file_id AS fileId,
+      f.uploader_user_id AS uploaderUserId,
+      uploader.nickname AS uploaderNickname,
+      uploader.email AS uploaderEmail,
+      f.team_id AS teamId,
+      t.name AS teamName,
+      f.original_name AS originalName,
+      f.stored_path AS storedPath,
+      f.content_type AS contentType,
+      f.size_bytes AS sizeBytes,
+      f.duration_seconds AS durationSeconds,
+      f.status,
+      f.hold_reason AS holdReason,
+      f.deleted_at AS deletedAt,
+      f.physical_delete_due_at AS physicalDeleteDueAt,
+      f.created_at AS createdAt,
+      (
+        SELECT COUNT(*)
+        FROM work_item wi
+        WHERE wi.file_id = f.file_id
+          AND wi.status != 'DELETED'
+      ) AS workReferenceCount,
+      (
+        SELECT COUNT(*)
+        FROM team_work_approval_request twr
+        WHERE twr.file_id = f.file_id
+          AND twr.status IN ('PENDING', 'APPROVED')
+      ) AS requestReferenceCount
+    FROM file_metadata f
+    JOIN user_account uploader ON uploader.user_id = f.uploader_user_id
+    LEFT JOIN team t ON t.team_id = f.team_id
+    WHERE f.file_id = #{fileId}
+  </select>
+
+  <select id="selectFilesByUploader" resultType="map">
+    SELECT
+      f.file_id AS fileId,
+      f.uploader_user_id AS uploaderUserId,
+      uploader.nickname AS uploaderNickname,
+      uploader.email AS uploaderEmail,
+      f.team_id AS teamId,
+      t.name AS teamName,
+      f.original_name AS originalName,
+      f.content_type AS contentType,
+      f.size_bytes AS sizeBytes,
+      f.duration_seconds AS durationSeconds,
+      f.status,
+      f.hold_reason AS holdReason,
+      f.deleted_at AS deletedAt,
+      f.physical_delete_due_at AS physicalDeleteDueAt,
+      f.created_at AS createdAt,
+      (
+        SELECT COUNT(*)
+        FROM work_item wi
+        WHERE wi.file_id = f.file_id
+          AND wi.status != 'DELETED'
+      ) AS workReferenceCount,
+      (
+        SELECT COUNT(*)
+        FROM team_work_approval_request twr
+        WHERE twr.file_id = f.file_id
+          AND twr.status IN ('PENDING', 'APPROVED')
+      ) AS requestReferenceCount
+    FROM file_metadata f
+    JOIN user_account uploader ON uploader.user_id = f.uploader_user_id
+    LEFT JOIN team t ON t.team_id = f.team_id
+    WHERE f.uploader_user_id = #{userId}
+      <if test="status != null and status != ''">
+        AND f.status = #{status}
+      </if>
+    ORDER BY f.created_at DESC, f.file_id DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectStreamAccessRows" resultType="map">
+    SELECT
+      f.file_id AS fileId,
+      f.uploader_user_id AS uploaderUserId,
+      f.team_id AS fileTeamId,
+      f.status AS fileStatus,
+      wi.work_id AS workId,
+      wi.owner_user_id AS workOwnerUserId,
+      wi.team_id AS workTeamId,
+      wi.visibility AS workVisibility,
+      wi.status AS workStatus,
+      p.post_id AS postId,
+      p.author_user_id AS postAuthorUserId,
+      p.visibility AS postVisibility,
+      p.status AS postStatus,
+      p.deleted_at AS postDeletedAt,
+      twr.request_id AS requestId,
+      twr.requester_user_id AS requestUserId,
+      twr.team_id AS requestTeamId,
+      twr.status AS requestStatus
+    FROM file_metadata f
+    LEFT JOIN work_item wi ON wi.file_id = f.file_id
+      AND wi.status = 'PUBLISHED'
+    LEFT JOIN board_post p ON p.post_id = wi.board_post_id
+      AND p.status = 'PUBLISHED'
+      AND p.deleted_at IS NULL
+    LEFT JOIN team_work_approval_request twr ON twr.file_id = f.file_id
+      AND twr.status IN ('PENDING', 'APPROVED')
+    WHERE f.file_id = #{fileId}
+  </select>
+
+  <select id="selectFiles" resultType="map">
+    SELECT
+      f.file_id AS fileId,
+      f.uploader_user_id AS uploaderUserId,
+      uploader.nickname AS uploaderNickname,
+      uploader.email AS uploaderEmail,
+      f.team_id AS teamId,
+      t.name AS teamName,
+      f.original_name AS originalName,
+      f.content_type AS contentType,
+      f.size_bytes AS sizeBytes,
+      f.duration_seconds AS durationSeconds,
+      f.status,
+      f.hold_reason AS holdReason,
+      f.deleted_at AS deletedAt,
+      f.physical_delete_due_at AS physicalDeleteDueAt,
+      f.created_at AS createdAt,
+      (
+        SELECT COUNT(*)
+        FROM work_item wi
+        WHERE wi.file_id = f.file_id
+          AND wi.status != 'DELETED'
+      ) AS workReferenceCount,
+      (
+        SELECT COUNT(*)
+        FROM team_work_approval_request twr
+        WHERE twr.file_id = f.file_id
+          AND twr.status IN ('PENDING', 'APPROVED')
+      ) AS requestReferenceCount
+    FROM file_metadata f
+    JOIN user_account uploader ON uploader.user_id = f.uploader_user_id
+    LEFT JOIN team t ON t.team_id = f.team_id
+    WHERE 1 = 1
+      <if test="status != null and status != ''">
+        AND f.status = #{status}
+      </if>
+      <if test="keyword != null and keyword != ''">
+        AND (
+          f.original_name LIKE CONCAT('%', #{keyword}, '%')
+          OR uploader.nickname LIKE CONCAT('%', #{keyword}, '%')
+          OR uploader.email LIKE CONCAT('%', #{keyword}, '%')
+          OR t.name LIKE CONCAT('%', #{keyword}, '%')
+        )
+      </if>
+      <if test="uploaderUserId != null">
+        AND f.uploader_user_id = #{uploaderUserId}
+      </if>
+      <if test="teamId != null">
+        AND f.team_id = #{teamId}
+      </if>
+    ORDER BY f.created_at DESC, f.file_id DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectStorageSummary" resultType="map">
+    SELECT
+      COUNT(*) AS totalCount,
+      COALESCE(SUM(size_bytes), 0) AS totalBytes,
+      COALESCE(SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END), 0) AS activeCount,
+      COALESCE(SUM(CASE WHEN status = 'ACTIVE' THEN size_bytes ELSE 0 END), 0) AS activeBytes,
+      COALESCE(SUM(CASE WHEN status = 'HELD' THEN 1 ELSE 0 END), 0) AS heldCount,
+      COALESCE(SUM(CASE WHEN status = 'HELD' THEN size_bytes ELSE 0 END), 0) AS heldBytes,
+      COALESCE(SUM(CASE WHEN status = 'DELETED' THEN 1 ELSE 0 END), 0) AS deletedCount,
+      COALESCE(SUM(CASE WHEN status = 'DELETED' THEN size_bytes ELSE 0 END), 0) AS deletedBytes
+    FROM file_metadata
+  </select>
+
+  <select id="selectTopUsersByActiveSize" resultType="map">
+    SELECT
+      f.uploader_user_id AS userId,
+      u.nickname,
+      u.email,
+      COUNT(*) AS fileCount,
+      COALESCE(SUM(f.size_bytes), 0) AS activeBytes
+    FROM file_metadata f
+    JOIN user_account u ON u.user_id = f.uploader_user_id
+    WHERE f.status = 'ACTIVE'
+      AND f.deleted_at IS NULL
+    GROUP BY f.uploader_user_id, u.nickname, u.email
+    ORDER BY activeBytes DESC, fileCount DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectTopTeamsByActiveSize" resultType="map">
+    SELECT
+      f.team_id AS teamId,
+      t.name AS teamName,
+      COUNT(*) AS fileCount,
+      COALESCE(SUM(f.size_bytes), 0) AS activeBytes
+    FROM file_metadata f
+    JOIN team t ON t.team_id = f.team_id
+    WHERE f.team_id IS NOT NULL
+      AND f.status = 'ACTIVE'
+      AND f.deleted_at IS NULL
+    GROUP BY f.team_id, t.name
+    ORDER BY activeBytes DESC, fileCount DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="countFileReferences" resultType="int">
+    SELECT
+      (
+        SELECT COUNT(*)
+        FROM work_item wi
+        WHERE wi.file_id = #{fileId}
+          AND wi.status != 'DELETED'
+      )
+      +
+      (
+        SELECT COUNT(*)
+        FROM team_work_approval_request twr
+        WHERE twr.file_id = #{fileId}
+          AND twr.status IN ('PENDING', 'APPROVED')
+      )
+  </select>
+
+  <update id="softDeleteFile">
+    UPDATE file_metadata
+    SET status = 'DELETED',
+        hold_reason = #{holdReason},
+        deleted_at = NOW(),
+        physical_delete_due_at = DATE_ADD(NOW(), INTERVAL 30 DAY)
+    WHERE file_id = #{fileId}
+  </update>
+
+  <update id="holdFile">
+    UPDATE file_metadata
+    SET status = 'HELD',
+        hold_reason = #{holdReason},
+        deleted_at = NULL,
+        physical_delete_due_at = NULL
+    WHERE file_id = #{fileId}
+  </update>
+
+  <update id="restoreFile">
+    UPDATE file_metadata
+    SET status = 'ACTIVE',
+        hold_reason = NULL,
+        deleted_at = NULL,
+        physical_delete_due_at = NULL
+    WHERE file_id = #{fileId}
+  </update>
+
+  <select id="sumActiveSizeByUser" resultType="long">
+    SELECT COALESCE(SUM(size_bytes), 0)
+    FROM file_metadata
+    WHERE uploader_user_id = #{userId}
+      AND status = 'ACTIVE'
+      AND deleted_at IS NULL
+  </select>
+
+  <select id="sumActiveSizeByTeam" resultType="long">
+    SELECT COALESCE(SUM(size_bytes), 0)
+    FROM file_metadata
+    WHERE team_id = #{teamId}
+      AND status = 'ACTIVE'
+      AND deleted_at IS NULL
+  </select>
+</mapper>

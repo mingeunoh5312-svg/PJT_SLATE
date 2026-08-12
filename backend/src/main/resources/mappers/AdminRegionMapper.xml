@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.references.AdminRegionMapper">
+
+  <sql id="RegionColumns">
+    r.region_id AS regionId,
+    r.region_code AS regionCode,
+    r.sido_name AS sidoName,
+    r.sigungu_name AS sigunguName,
+    r.dong_name AS dongName,
+    r.center_lat AS centerLat,
+    r.center_lng AS centerLng,
+    r.public_display_name AS publicDisplayName,
+    r.active_yn AS activeYn,
+    (SELECT COUNT(*) FROM member_profile mp WHERE mp.region_id = r.region_id) AS profileCount,
+    (SELECT COUNT(*) FROM team t WHERE t.region_id = r.region_id) AS teamCount
+  </sql>
+
+  <select id="selectRegions" resultType="map">
+    SELECT
+      <include refid="RegionColumns"/>
+    FROM region r
+    WHERE 1 = 1
+      <if test="keyword != null and keyword != ''">
+        AND CONCAT_WS(' ', r.region_code, r.sido_name, r.sigungu_name, r.dong_name, r.public_display_name)
+            LIKE CONCAT('%', #{keyword}, '%')
+      </if>
+      <if test="sidoName != null and sidoName != ''">
+        AND r.sido_name = #{sidoName}
+      </if>
+      <if test="activeYn != null and activeYn != ''">
+        AND r.active_yn = #{activeYn}
+      </if>
+    ORDER BY r.sido_name, r.sigungu_name, r.dong_name, r.region_id
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectRegionById" resultType="map">
+    SELECT
+      <include refid="RegionColumns"/>
+    FROM region r
+    WHERE r.region_id = #{regionId}
+  </select>
+
+  <select id="selectSummary" resultType="map">
+    SELECT
+      COUNT(*) AS totalCount,
+      SUM(CASE WHEN active_yn = 'Y' THEN 1 ELSE 0 END) AS activeCount,
+      SUM(CASE WHEN active_yn = 'N' THEN 1 ELSE 0 END) AS inactiveCount,
+      COUNT(DISTINCT sido_name) AS sidoCount,
+      MIN(center_lat) AS minLat,
+      MAX(center_lat) AS maxLat,
+      MIN(center_lng) AS minLng,
+      MAX(center_lng) AS maxLng
+    FROM region
+  </select>
+
+  <update id="updateRegion">
+    UPDATE region
+    SET
+      sido_name = #{sidoName},
+      sigungu_name = #{sigunguName},
+      dong_name = #{dongName},
+      center_lat = #{centerLat},
+      center_lng = #{centerLng},
+      public_display_name = #{publicDisplayName},
+      active_yn = #{activeYn}
+    WHERE region_id = #{regionId}
+  </update>
+</mapper>

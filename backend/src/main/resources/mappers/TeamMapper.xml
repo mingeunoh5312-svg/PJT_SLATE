@@ -1,0 +1,968 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.teams.TeamMapper">
+
+  <sql id="teamColumns">
+    t.team_id AS teamId,
+    t.leader_user_id AS leaderUserId,
+    leader.nickname AS leaderNickname,
+    t.name,
+    t.description,
+    CASE WHEN t.representative_image_path IS NOT NULL THEN CONCAT('/api/media/images/team/', t.team_id) ELSE NULL END AS imageUrl,
+    t.status,
+    t.end_type AS endType,
+    t.region_id AS regionId,
+    t.region_any_yn AS regionAnyYn,
+    rg.public_display_name AS publicRegionName,
+    t.expected_duration AS expectedDuration,
+    t.max_member_count AS maxMemberCount,
+    t.current_member_count AS currentMemberCount,
+    t.last_active_at AS lastActiveAt,
+    t.created_at AS createdAt,
+    t.updated_at AS updatedAt
+  </sql>
+
+  <sql id="adminTeamColumns">
+    t.team_id AS teamId,
+    t.leader_user_id AS leaderUserId,
+    leader.nickname AS leaderNickname,
+    t.name,
+    t.description,
+    CASE WHEN t.representative_image_path IS NOT NULL THEN CONCAT('/api/media/images/team/', t.team_id) ELSE NULL END AS imageUrl,
+    LEFT(t.description, 140) AS descriptionSummary,
+    t.status,
+    t.end_type AS endType,
+    t.region_id AS regionId,
+    t.region_any_yn AS regionAnyYn,
+    rg.public_display_name AS publicRegionName,
+    rg.public_display_name AS regionDisplayName,
+    t.expected_duration AS expectedDuration,
+    t.max_member_count AS maxMemberCount,
+    t.current_member_count AS currentMemberCount,
+    (
+      SELECT COUNT(*)
+      FROM team_recruitment tr
+      WHERE tr.team_id = t.team_id
+        AND tr.status = 'OPEN'
+    ) AS activeRecruitmentCount,
+    (
+      SELECT COUNT(*)
+      FROM team_application ta
+      WHERE ta.team_id = t.team_id
+        AND ta.status = 'PENDING'
+    ) AS pendingApplicationCount,
+    (
+      SELECT COUNT(*)
+      FROM team_member tm
+      WHERE tm.team_id = t.team_id
+        AND tm.status = 'ACTIVE'
+    ) AS activeMemberCount,
+    t.last_active_at AS lastActiveAt,
+    t.created_at AS createdAt,
+    t.updated_at AS updatedAt,
+    CASE WHEN t.status = 'ENDED' THEN t.updated_at ELSE NULL END AS endedAt,
+    CASE WHEN t.status = 'DELETED' THEN t.updated_at ELSE NULL END AS deletedAt
+  </sql>
+
+  <select id="selectTeamsByUserId" resultType="map">
+    SELECT
+      <include refid="teamColumns" />,
+      tm.team_role AS myTeamRole,
+      tm.status AS myMemberStatus,
+      (
+        SELECT COUNT(*)
+        FROM team_application ta
+        WHERE ta.team_id = t.team_id
+          AND ta.status = 'PENDING'
+      ) AS pendingApplicationCount,
+      (
+        SELECT COUNT(*)
+        FROM team_invitation ti
+        WHERE ti.team_id = t.team_id
+          AND ti.status = 'PENDING'
+      ) AS pendingInvitationCount,
+      (
+        SELECT p.plan_item_id
+        FROM team_plan_item p
+        WHERE p.team_id = t.team_id
+          AND p.status NOT IN ('DONE', 'CANCELED')
+          AND (p.assignee_user_id IS NULL OR p.assignee_user_id = #{userId})
+        ORDER BY p.due_at IS NULL, p.due_at, p.plan_item_id
+        LIMIT 1
+      ) AS nextUserPlanItemId,
+      (
+        SELECT p.title
+        FROM team_plan_item p
+        WHERE p.team_id = t.team_id
+          AND p.status NOT IN ('DONE', 'CANCELED')
+          AND (p.assignee_user_id IS NULL OR p.assignee_user_id = #{userId})
+        ORDER BY p.due_at IS NULL, p.due_at, p.plan_item_id
+        LIMIT 1
+      ) AS nextUserPlanTitle,
+      (
+        SELECT p.due_at
+        FROM team_plan_item p
+        WHERE p.team_id = t.team_id
+          AND p.status NOT IN ('DONE', 'CANCELED')
+          AND (p.assignee_user_id IS NULL OR p.assignee_user_id = #{userId})
+        ORDER BY p.due_at IS NULL, p.due_at, p.plan_item_id
+        LIMIT 1
+      ) AS nextUserPlanDueAt
+    FROM team_member tm
+    JOIN team t ON t.team_id = tm.team_id
+    JOIN user_account leader ON leader.user_id = t.leader_user_id
+    LEFT JOIN region rg ON rg.region_id = t.region_id
+    WHERE tm.user_id = #{userId}
+      AND tm.status = 'ACTIVE'
+      AND t.status != 'DELETED'
+    ORDER BY t.last_active_at DESC, t.created_at DESC
+  </select>
+
+  <select id="selectAdminTeams" resultType="map">
+    SELECT <include refid="adminTeamColumns" />
+    FROM team t
+    JOIN user_account leader ON leader.user_id = t.leader_user_id
+    LEFT JOIN region rg ON rg.region_id = t.region_id
+    WHERE 1 = 1
+      <if test="keyword != null and keyword != ''">
+        AND (
+          t.name LIKE CONCAT('%', #{keyword}, '%')
+          OR t.description LIKE CONCAT('%', #{keyword}, '%')
+          OR leader.nickname LIKE CONCAT('%', #{keyword}, '%')
+        )
+      </if>
+      <if test="status != null and status != ''">
+        AND t.status = #{status}
+      </if>
+      <if test="regionId != null">
+        AND t.region_id = #{regionId}
+      </if>
+      <if test="leaderUserId != null">
+        AND t.leader_user_id = #{leaderUserId}
+      </if>
+    ORDER BY t.updated_at DESC, t.last_active_at DESC, t.created_at DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectTeamById" resultType="map">
+    SELECT <include refid="teamColumns" />
+    FROM team t
+    JOIN user_account leader ON leader.user_id = t.leader_user_id
+    LEFT JOIN region rg ON rg.region_id = t.region_id
+    WHERE t.team_id = #{teamId}
+      AND t.status != 'DELETED'
+  </select>
+
+  <select id="selectAdminTeamById" resultType="map">
+    SELECT <include refid="adminTeamColumns" />
+    FROM team t
+    JOIN user_account leader ON leader.user_id = t.leader_user_id
+    LEFT JOIN region rg ON rg.region_id = t.region_id
+    WHERE t.team_id = #{teamId}
+  </select>
+
+  <select id="selectTeamGenres" resultType="map">
+    SELECT g.genre_id AS genreId, g.name
+    FROM team_genre tg
+    JOIN genre g ON g.genre_id = tg.genre_id
+    WHERE tg.team_id = #{teamId}
+    ORDER BY g.sort_order
+  </select>
+
+  <select id="selectTeamMembers" resultType="map">
+    SELECT
+      tm.team_member_id AS teamMemberId,
+      tm.team_id AS teamId,
+      tm.user_id AS userId,
+      mp.profile_id AS profileId,
+      u.nickname,
+      u.email,
+      tm.team_role AS teamRole,
+      tm.status,
+      tm.joined_at AS joinedAt,
+      tm.left_at AS leftAt
+    FROM team_member tm
+    JOIN user_account u ON u.user_id = tm.user_id
+    LEFT JOIN member_profile mp
+      ON mp.user_id = tm.user_id
+     AND mp.status = 'ACTIVE'
+    WHERE tm.team_id = #{teamId}
+    ORDER BY FIELD(tm.team_role, 'LEADER', 'SUB_LEADER', 'MEMBER'), tm.joined_at
+  </select>
+
+  <select id="selectRecruitmentsByTeamId" resultType="map">
+    SELECT
+      r.recruitment_id AS recruitmentId,
+      r.team_id AS teamId,
+      r.title,
+      r.status,
+      r.deadline_at AS deadlineAt,
+      r.work_start_at AS workStartAt,
+      r.created_by AS createdBy,
+      u.nickname AS createdByNickname,
+      r.created_at AS createdAt,
+      r.updated_at AS updatedAt
+    FROM team_recruitment r
+    JOIN user_account u ON u.user_id = r.created_by
+    WHERE r.team_id = #{teamId}
+      AND r.status != 'DELETED'
+    ORDER BY r.created_at DESC
+  </select>
+
+  <select id="selectRecruitmentById" resultType="map">
+    SELECT
+      r.recruitment_id AS recruitmentId,
+      r.team_id AS teamId,
+      r.title,
+      r.status,
+      r.deadline_at AS deadlineAt,
+      r.work_start_at AS workStartAt,
+      r.created_by AS createdBy,
+      r.created_at AS createdAt,
+      r.updated_at AS updatedAt
+    FROM team_recruitment r
+    WHERE r.recruitment_id = #{recruitmentId}
+  </select>
+
+  <select id="selectSlotsByRecruitmentId" resultType="map">
+    SELECT
+      s.slot_id AS slotId,
+      s.recruitment_id AS recruitmentId,
+      s.role_id AS roleId,
+      r.name AS roleName,
+      rc.name AS roleCategoryName,
+      s.required_count AS requiredCount,
+      s.accepted_count AS acceptedCount,
+      s.required_count - s.accepted_count AS remainingCount,
+      s.required_experience_level AS requiredExperienceLevel,
+      s.collaboration_condition AS collaborationCondition,
+      s.required_yn AS requiredYn,
+      s.role_duration AS roleDuration,
+      s.equipment_required_yn AS equipmentRequiredYn,
+      s.status
+    FROM team_recruitment_slot s
+    JOIN `role` r ON r.role_id = s.role_id
+    JOIN role_category rc ON rc.role_category_id = r.role_category_id
+    WHERE s.recruitment_id = #{recruitmentId}
+      AND s.status != 'DELETED'
+    ORDER BY s.slot_id
+  </select>
+
+  <select id="selectSlotById" resultType="map">
+    SELECT
+      s.slot_id AS slotId,
+      s.recruitment_id AS recruitmentId,
+      tr.team_id AS teamId,
+      s.role_id AS roleId,
+      r.name AS roleName,
+      rc.name AS roleCategoryName,
+      s.required_count AS requiredCount,
+      s.accepted_count AS acceptedCount,
+      s.required_count - s.accepted_count AS remainingCount,
+      s.required_experience_level AS requiredExperienceLevel,
+      s.collaboration_condition AS collaborationCondition,
+      s.required_yn AS requiredYn,
+      s.role_duration AS roleDuration,
+      s.equipment_required_yn AS equipmentRequiredYn,
+      s.status
+    FROM team_recruitment_slot s
+    JOIN team_recruitment tr ON tr.recruitment_id = s.recruitment_id
+    JOIN `role` r ON r.role_id = s.role_id
+    JOIN role_category rc ON rc.role_category_id = r.role_category_id
+    WHERE s.slot_id = #{slotId}
+  </select>
+
+  <select id="countActiveTeamsByUserId" resultType="int">
+    SELECT COUNT(*)
+    FROM team_member tm
+    JOIN team t ON t.team_id = tm.team_id
+    WHERE tm.user_id = #{userId}
+      AND tm.status = 'ACTIVE'
+      AND t.status IN ('RECRUITING', 'IN_PROGRESS', 'RECRUITMENT_CLOSED', 'CLOSING')
+  </select>
+
+  <select id="selectActiveTeamRole" resultType="string">
+    SELECT tm.team_role
+    FROM team_member tm
+    JOIN team t ON t.team_id = tm.team_id
+    WHERE tm.team_id = #{teamId}
+      AND tm.user_id = #{userId}
+      AND tm.status = 'ACTIVE'
+      AND t.status != 'DELETED'
+    LIMIT 1
+  </select>
+
+  <insert id="insertTeam" parameterType="map" useGeneratedKeys="true" keyProperty="teamId">
+    INSERT INTO team (
+      leader_user_id, name, description, status, region_id, region_any_yn,
+      expected_duration, max_member_count, current_member_count, last_active_at, created_at
+    ) VALUES (
+      #{leaderUserId}, #{name}, #{description}, #{status}, #{regionId}, #{regionAnyYn},
+      #{expectedDuration}, #{maxMemberCount}, 1, NOW(), NOW()
+    )
+  </insert>
+
+  <update id="updateTeam" parameterType="map">
+    UPDATE team
+    SET name = #{name},
+        description = #{description},
+        status = #{status},
+        region_id = #{regionId},
+        region_any_yn = #{regionAnyYn},
+        expected_duration = #{expectedDuration},
+        max_member_count = #{maxMemberCount},
+        last_active_at = NOW(),
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+  </update>
+
+  <update id="updateAdminTeam" parameterType="map">
+    UPDATE team
+    SET name = #{name},
+        description = #{description},
+        status = #{status},
+        region_id = #{regionId},
+        region_any_yn = #{regionAnyYn},
+        expected_duration = #{expectedDuration},
+        max_member_count = #{maxMemberCount},
+        last_active_at = NOW(),
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status NOT IN ('ENDED', 'DELETED')
+  </update>
+
+  <update id="updateAdminTeamStatus">
+    UPDATE team
+    SET status = #{status},
+        last_active_at = NOW(),
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status NOT IN ('ENDED', 'DELETED')
+  </update>
+
+  <update id="softDeleteTeam">
+    UPDATE team
+    SET status = 'DELETED',
+        end_type = 'DISSOLUTION',
+        last_active_at = NOW(),
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status NOT IN ('ENDED', 'DELETED')
+  </update>
+
+  <update id="softDeleteAdminTeam">
+    UPDATE team
+    SET status = 'DELETED',
+        end_type = 'DISSOLUTION',
+        last_active_at = NOW(),
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status != 'DELETED'
+  </update>
+
+  <update id="updateTeamLeader">
+    UPDATE team
+    SET leader_user_id = #{leaderUserId},
+        last_active_at = NOW(),
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status NOT IN ('ENDED', 'DELETED')
+  </update>
+
+  <update id="closeTeam">
+    UPDATE team
+    SET status = 'ENDED',
+        end_type = #{endType},
+        last_active_at = NOW(),
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status NOT IN ('ENDED', 'DELETED')
+  </update>
+
+  <update id="reopenTeam">
+    UPDATE team
+    SET status = #{status},
+        end_type = NULL,
+        last_active_at = NOW(),
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status = 'ENDED'
+  </update>
+
+  <update id="restoreAdminTeam">
+    UPDATE team
+    SET status = #{status},
+        end_type = NULL,
+        last_active_at = NOW(),
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status = 'DELETED'
+  </update>
+
+  <delete id="deleteTeamGenres">
+    DELETE FROM team_genre WHERE team_id = #{teamId}
+  </delete>
+
+  <insert id="insertTeamGenre">
+    INSERT INTO team_genre (team_id, genre_id)
+    VALUES (#{teamId}, #{genreId})
+  </insert>
+
+  <insert id="insertTeamMember">
+    INSERT INTO team_member (team_id, user_id, team_role, status, joined_at)
+    VALUES (#{teamId}, #{userId}, #{teamRole}, 'ACTIVE', NOW())
+  </insert>
+
+  <insert id="upsertActiveTeamMember">
+    INSERT INTO team_member (team_id, user_id, team_role, status, joined_at, left_at)
+    VALUES (#{teamId}, #{userId}, #{teamRole}, 'ACTIVE', NOW(), NULL)
+    ON DUPLICATE KEY UPDATE
+      team_role = VALUES(team_role),
+      status = 'ACTIVE',
+      joined_at = NOW(),
+      left_at = NULL
+  </insert>
+
+  <select id="selectTeamMember" resultType="map">
+    SELECT
+      tm.team_member_id AS teamMemberId,
+      tm.team_id AS teamId,
+      tm.user_id AS userId,
+      mp.profile_id AS profileId,
+      u.nickname,
+      u.email,
+      tm.team_role AS teamRole,
+      tm.status,
+      tm.joined_at AS joinedAt,
+      tm.left_at AS leftAt
+    FROM team_member tm
+    JOIN user_account u ON u.user_id = tm.user_id
+    LEFT JOIN member_profile mp
+      ON mp.user_id = tm.user_id
+     AND mp.status = 'ACTIVE'
+    WHERE tm.team_id = #{teamId}
+      AND tm.user_id = #{userId}
+  </select>
+
+  <update id="updateTeamMemberRole">
+    UPDATE team_member
+    SET team_role = #{teamRole}
+    WHERE team_id = #{teamId}
+      AND user_id = #{userId}
+      AND status = 'ACTIVE'
+  </update>
+
+  <update id="updateTeamMemberStatus">
+    UPDATE team_member
+    SET status = #{status},
+        left_at = NOW()
+    WHERE team_id = #{teamId}
+      AND user_id = #{userId}
+      AND status = 'ACTIVE'
+  </update>
+
+  <update id="recountTeamMemberCount">
+    UPDATE team
+    SET current_member_count = (
+          SELECT COUNT(*)
+          FROM team_member
+          WHERE team_id = #{teamId}
+            AND status = 'ACTIVE'
+        ),
+        last_active_at = NOW(),
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+  </update>
+
+  <select id="selectApplicationsByTeamId" resultType="map">
+    SELECT
+      ta.application_id AS applicationId,
+      ta.team_id AS teamId,
+      ta.recruitment_id AS recruitmentId,
+      tr.title AS recruitmentTitle,
+      ta.slot_id AS slotId,
+      r.name AS roleName,
+      ta.applicant_user_id AS applicantUserId,
+      mp.profile_id AS applicantProfileId,
+      u.nickname AS applicantNickname,
+      u.email AS applicantEmail,
+      ta.message,
+      ta.status,
+      ta.reject_reason AS rejectReason,
+      ta.decided_by AS decidedBy,
+      decider.nickname AS decidedByNickname,
+      ta.decided_at AS decidedAt,
+      ta.created_at AS createdAt
+    FROM team_application ta
+    JOIN team_recruitment tr ON tr.recruitment_id = ta.recruitment_id
+    JOIN team_recruitment_slot s ON s.slot_id = ta.slot_id
+    JOIN `role` r ON r.role_id = s.role_id
+    JOIN user_account u ON u.user_id = ta.applicant_user_id
+    LEFT JOIN member_profile mp
+      ON mp.user_id = ta.applicant_user_id
+     AND mp.status = 'ACTIVE'
+    LEFT JOIN user_account decider ON decider.user_id = ta.decided_by
+    WHERE ta.team_id = #{teamId}
+    ORDER BY FIELD(ta.status, 'PENDING', 'ACCEPTED', 'REJECTED', 'CANCELED', 'EXPIRED'), ta.created_at DESC
+  </select>
+
+  <select id="selectApplicationById" resultType="map">
+    SELECT
+      ta.application_id AS applicationId,
+      ta.team_id AS teamId,
+      t.name AS teamName,
+      ta.recruitment_id AS recruitmentId,
+      ta.slot_id AS slotId,
+      r.name AS roleName,
+      ta.applicant_user_id AS applicantUserId,
+      u.nickname AS applicantNickname,
+      ta.message,
+      ta.status,
+      ta.reject_reason AS rejectReason,
+      ta.decided_by AS decidedBy,
+      ta.decided_at AS decidedAt,
+      ta.created_at AS createdAt
+    FROM team_application ta
+    JOIN team t ON t.team_id = ta.team_id
+    JOIN team_recruitment_slot s ON s.slot_id = ta.slot_id
+    JOIN `role` r ON r.role_id = s.role_id
+    JOIN user_account u ON u.user_id = ta.applicant_user_id
+    WHERE ta.application_id = #{applicationId}
+  </select>
+
+  <update id="updateApplicationDecision">
+    UPDATE team_application
+    SET status = #{status},
+        reject_reason = #{rejectReason,jdbcType=VARCHAR},
+        decided_by = #{decidedBy},
+        decided_at = NOW(),
+        updated_at = NOW()
+    WHERE application_id = #{applicationId}
+      AND status = 'PENDING'
+  </update>
+
+  <select id="selectInvitationsByTeamId" resultType="map">
+    SELECT
+      ti.invitation_id AS invitationId,
+      ti.team_id AS teamId,
+      ti.recruitment_id AS recruitmentId,
+      tr.title AS recruitmentTitle,
+      ti.slot_id AS slotId,
+      r.name AS roleName,
+      ti.target_user_id AS targetUserId,
+      target.nickname AS targetNickname,
+      target.email AS targetEmail,
+      ti.inviter_user_id AS inviterUserId,
+      inviter.nickname AS inviterNickname,
+      ti.message,
+      ti.status,
+      ti.decided_at AS decidedAt,
+      ti.created_at AS createdAt
+    FROM team_invitation ti
+    JOIN team_recruitment tr ON tr.recruitment_id = ti.recruitment_id
+    JOIN team_recruitment_slot s ON s.slot_id = ti.slot_id
+    JOIN `role` r ON r.role_id = s.role_id
+    JOIN user_account target ON target.user_id = ti.target_user_id
+    JOIN user_account inviter ON inviter.user_id = ti.inviter_user_id
+    WHERE ti.team_id = #{teamId}
+    ORDER BY FIELD(ti.status, 'PENDING', 'ACCEPTED', 'REJECTED', 'CANCELED', 'EXPIRED'), ti.created_at DESC
+  </select>
+
+  <select id="selectInvitationsByTargetUserId" resultType="map">
+    SELECT
+      ti.invitation_id AS invitationId,
+      ti.team_id AS teamId,
+      t.name AS teamName,
+      ti.recruitment_id AS recruitmentId,
+      tr.title AS recruitmentTitle,
+      ti.slot_id AS slotId,
+      r.name AS roleName,
+      ti.inviter_user_id AS inviterUserId,
+      inviter.nickname AS inviterNickname,
+      ti.message,
+      ti.status,
+      ti.decided_at AS decidedAt,
+      ti.created_at AS createdAt
+    FROM team_invitation ti
+    JOIN team t ON t.team_id = ti.team_id
+    JOIN team_recruitment tr ON tr.recruitment_id = ti.recruitment_id
+    JOIN team_recruitment_slot s ON s.slot_id = ti.slot_id
+    JOIN `role` r ON r.role_id = s.role_id
+    JOIN user_account inviter ON inviter.user_id = ti.inviter_user_id
+    WHERE ti.target_user_id = #{userId}
+    ORDER BY FIELD(ti.status, 'PENDING', 'ACCEPTED', 'REJECTED', 'CANCELED', 'EXPIRED'), ti.created_at DESC
+  </select>
+
+  <select id="selectInvitationById" resultType="map">
+    SELECT
+      ti.invitation_id AS invitationId,
+      ti.team_id AS teamId,
+      t.name AS teamName,
+      ti.recruitment_id AS recruitmentId,
+      ti.slot_id AS slotId,
+      r.name AS roleName,
+      ti.target_user_id AS targetUserId,
+      target.nickname AS targetNickname,
+      ti.inviter_user_id AS inviterUserId,
+      ti.message,
+      ti.status,
+      ti.decided_at AS decidedAt,
+      ti.created_at AS createdAt
+    FROM team_invitation ti
+    JOIN team t ON t.team_id = ti.team_id
+    JOIN team_recruitment_slot s ON s.slot_id = ti.slot_id
+    JOIN `role` r ON r.role_id = s.role_id
+    JOIN user_account target ON target.user_id = ti.target_user_id
+    WHERE ti.invitation_id = #{invitationId}
+  </select>
+
+  <update id="updateInvitationDecision">
+    UPDATE team_invitation
+    SET status = #{status},
+        decided_at = NOW(),
+        updated_at = NOW()
+    WHERE invitation_id = #{invitationId}
+      AND status = 'PENDING'
+  </update>
+
+  <update id="cancelPendingApplications">
+    UPDATE team_application
+    SET status = 'CANCELED',
+        reject_reason = '팀 종료로 자동 취소되었습니다.',
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status = 'PENDING'
+  </update>
+
+  <update id="cancelPendingInvitations">
+    UPDATE team_invitation
+    SET status = 'CANCELED',
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status = 'PENDING'
+  </update>
+
+  <update id="incrementSlotAcceptedCount">
+    UPDATE team_recruitment_slot
+    SET accepted_count = accepted_count + 1
+    WHERE slot_id = #{slotId}
+      AND status = 'OPEN'
+      AND accepted_count &lt; required_count
+  </update>
+
+  <update id="closeFilledSlot">
+    UPDATE team_recruitment_slot
+    SET status = 'CLOSED'
+    WHERE slot_id = #{slotId}
+      AND accepted_count >= required_count
+  </update>
+
+  <insert id="insertRecruitment" parameterType="map" useGeneratedKeys="true" keyProperty="recruitmentId">
+    INSERT INTO team_recruitment (team_id, title, status, deadline_at, work_start_at, created_by, created_at)
+    VALUES (#{teamId}, #{title}, #{status}, #{deadlineAt}, #{workStartAt}, #{createdBy}, NOW())
+  </insert>
+
+  <update id="updateRecruitment" parameterType="map">
+    UPDATE team_recruitment
+    SET title = #{title},
+        status = #{status},
+        deadline_at = #{deadlineAt},
+        work_start_at = #{workStartAt},
+        updated_at = NOW()
+    WHERE recruitment_id = #{recruitmentId}
+      AND status != 'DELETED'
+  </update>
+
+  <update id="softDeleteRecruitment">
+    UPDATE team_recruitment
+    SET status = 'DELETED',
+        updated_at = NOW()
+    WHERE recruitment_id = #{recruitmentId}
+      AND status != 'DELETED'
+  </update>
+
+  <update id="softDeleteRecruitmentsByTeamId">
+    UPDATE team_recruitment
+    SET status = 'DELETED',
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status != 'DELETED'
+  </update>
+
+  <update id="closeRecruitmentsByTeamId">
+    UPDATE team_recruitment
+    SET status = 'CLOSED',
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status NOT IN ('CLOSED', 'DELETED')
+  </update>
+
+  <update id="closeExpiredRecruitmentsByTeamId">
+    UPDATE team_recruitment
+    SET status = 'CLOSED',
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND status = 'OPEN'
+      AND deadline_at IS NOT NULL
+      AND deadline_at &lt; NOW()
+  </update>
+
+  <update id="restoreRecruitmentStatus">
+    UPDATE team_recruitment
+    SET status = #{status},
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND recruitment_id = #{recruitmentId}
+      AND status != 'DELETED'
+  </update>
+
+  <update id="restoreRecruitmentStatusAsAdmin">
+    UPDATE team_recruitment
+    SET status = #{status},
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND recruitment_id = #{recruitmentId}
+  </update>
+
+  <insert id="insertRecruitmentSlot" parameterType="map" useGeneratedKeys="true" keyProperty="slotId">
+    INSERT INTO team_recruitment_slot (
+      recruitment_id, role_id, required_count, accepted_count, required_experience_level,
+      collaboration_condition, required_yn, role_duration, equipment_required_yn, status
+    ) VALUES (
+      #{recruitmentId}, #{roleId}, #{requiredCount}, 0, #{requiredExperienceLevel},
+      #{collaborationCondition}, #{requiredYn}, #{roleDuration}, #{equipmentRequiredYn}, #{status}
+    )
+  </insert>
+
+  <update id="updateRecruitmentSlot" parameterType="map">
+    UPDATE team_recruitment_slot
+    SET role_id = #{roleId},
+        required_count = #{requiredCount},
+        required_experience_level = #{requiredExperienceLevel},
+        collaboration_condition = #{collaborationCondition},
+        required_yn = #{requiredYn},
+        role_duration = #{roleDuration},
+        equipment_required_yn = #{equipmentRequiredYn},
+        status = #{status},
+        updated_at = NOW()
+    WHERE slot_id = #{slotId}
+      AND status != 'DELETED'
+  </update>
+
+  <update id="softDeleteSlot">
+    UPDATE team_recruitment_slot
+    SET status = 'DELETED',
+        updated_at = NOW()
+    WHERE slot_id = #{slotId}
+      AND status != 'DELETED'
+  </update>
+
+  <update id="softDeleteSlotsByRecruitment">
+    UPDATE team_recruitment_slot
+    SET status = 'DELETED',
+        updated_at = NOW()
+    WHERE recruitment_id = #{recruitmentId}
+      AND status != 'DELETED'
+  </update>
+
+  <update id="softDeleteSlotsByTeamId">
+    UPDATE team_recruitment_slot s
+    JOIN team_recruitment r ON r.recruitment_id = s.recruitment_id
+    SET s.status = 'DELETED',
+        s.updated_at = NOW()
+    WHERE r.team_id = #{teamId}
+      AND s.status != 'DELETED'
+  </update>
+
+  <update id="closeSlotsByTeamId">
+    UPDATE team_recruitment_slot s
+    JOIN team_recruitment r ON r.recruitment_id = s.recruitment_id
+    SET s.status = 'CLOSED'
+    WHERE r.team_id = #{teamId}
+      AND s.status NOT IN ('CLOSED', 'DELETED')
+  </update>
+
+  <update id="restoreSlotStatus">
+    UPDATE team_recruitment_slot s
+    JOIN team_recruitment r ON r.recruitment_id = s.recruitment_id
+    SET s.status = #{status},
+        s.updated_at = NOW()
+    WHERE r.team_id = #{teamId}
+      AND s.slot_id = #{slotId}
+      AND s.status != 'DELETED'
+  </update>
+
+  <update id="restoreSlotStatusAsAdmin">
+    UPDATE team_recruitment_slot s
+    JOIN team_recruitment r ON r.recruitment_id = s.recruitment_id
+    SET s.status = #{status},
+        s.updated_at = NOW()
+    WHERE r.team_id = #{teamId}
+      AND s.slot_id = #{slotId}
+  </update>
+
+  <update id="cancelPendingApplicationsByRecruitment">
+    UPDATE team_application
+    SET status = 'CANCELED',
+        reject_reason = '모집 공고 삭제로 자동 취소되었습니다.',
+        updated_at = NOW()
+    WHERE recruitment_id = #{recruitmentId}
+      AND status = 'PENDING'
+  </update>
+
+  <update id="cancelPendingInvitationsByRecruitment">
+    UPDATE team_invitation
+    SET status = 'CANCELED',
+        updated_at = NOW()
+    WHERE recruitment_id = #{recruitmentId}
+      AND status = 'PENDING'
+  </update>
+
+  <update id="cancelPendingApplicationsBySlot">
+    UPDATE team_application
+    SET status = 'CANCELED',
+        reject_reason = '모집 슬롯 삭제로 자동 취소되었습니다.',
+        updated_at = NOW()
+    WHERE slot_id = #{slotId}
+      AND status = 'PENDING'
+  </update>
+
+  <update id="cancelPendingInvitationsBySlot">
+    UPDATE team_invitation
+    SET status = 'CANCELED',
+        updated_at = NOW()
+    WHERE slot_id = #{slotId}
+      AND status = 'PENDING'
+  </update>
+
+  <select id="selectPlanItemsByTeamId" resultType="map">
+    SELECT
+      p.plan_item_id AS planItemId,
+      p.team_id AS teamId,
+      p.title,
+      p.description,
+      p.assignee_user_id AS assigneeUserId,
+      assignee.nickname AS assigneeNickname,
+      p.role_id AS roleId,
+      r.name AS roleName,
+      p.due_at AS dueAt,
+      p.status,
+      p.created_by AS createdBy,
+      creator.nickname AS createdByNickname,
+      p.created_at AS createdAt,
+      p.updated_at AS updatedAt
+    FROM team_plan_item p
+    LEFT JOIN user_account assignee ON assignee.user_id = p.assignee_user_id
+    LEFT JOIN `role` r ON r.role_id = p.role_id
+    JOIN user_account creator ON creator.user_id = p.created_by
+    WHERE p.team_id = #{teamId}
+    ORDER BY FIELD(p.status, 'TODO', 'IN_PROGRESS', 'HOLD', 'DONE', 'CANCELED'), p.due_at IS NULL, p.due_at, p.plan_item_id DESC
+  </select>
+
+  <select id="selectPlanItemById" resultType="map">
+    SELECT
+      p.plan_item_id AS planItemId,
+      p.team_id AS teamId,
+      p.title,
+      p.description,
+      p.assignee_user_id AS assigneeUserId,
+      assignee.nickname AS assigneeNickname,
+      p.role_id AS roleId,
+      r.name AS roleName,
+      p.due_at AS dueAt,
+      p.status,
+      p.created_by AS createdBy,
+      p.created_at AS createdAt,
+      p.updated_at AS updatedAt
+    FROM team_plan_item p
+    LEFT JOIN user_account assignee ON assignee.user_id = p.assignee_user_id
+    LEFT JOIN `role` r ON r.role_id = p.role_id
+    WHERE p.plan_item_id = #{planItemId}
+  </select>
+
+  <insert id="insertPlanItem" parameterType="map" useGeneratedKeys="true" keyProperty="planItemId">
+    INSERT INTO team_plan_item (
+      team_id, title, description, assignee_user_id, role_id, due_at, status, created_by, created_at
+    ) VALUES (
+      #{teamId}, #{title}, #{description,jdbcType=VARCHAR}, #{assigneeUserId,jdbcType=BIGINT},
+      #{roleId,jdbcType=BIGINT}, #{dueAt,jdbcType=VARCHAR}, #{status}, #{createdBy}, NOW()
+    )
+  </insert>
+
+  <update id="updatePlanItem" parameterType="map">
+    UPDATE team_plan_item
+    SET title = #{title},
+        description = #{description,jdbcType=VARCHAR},
+        assignee_user_id = #{assigneeUserId,jdbcType=BIGINT},
+        role_id = #{roleId,jdbcType=BIGINT},
+        due_at = #{dueAt,jdbcType=VARCHAR},
+        status = #{status},
+        updated_at = NOW()
+    WHERE plan_item_id = #{planItemId}
+  </update>
+
+  <update id="updatePlanItemStatus">
+    UPDATE team_plan_item
+    SET status = #{status},
+        updated_at = NOW()
+    WHERE plan_item_id = #{planItemId}
+  </update>
+
+  <update id="restorePlanItemStatus">
+    UPDATE team_plan_item
+    SET status = #{status},
+        updated_at = NOW()
+    WHERE team_id = #{teamId}
+      AND plan_item_id = #{planItemId}
+  </update>
+
+  <insert id="insertClosureSnapshot" parameterType="map" useGeneratedKeys="true" keyProperty="closureSnapshotId">
+    INSERT INTO team_closure_snapshot (
+      team_id, end_type, snapshot_json, created_by, created_at
+    ) VALUES (
+      #{teamId}, #{endType}, #{snapshotJson,jdbcType=VARCHAR}, #{createdBy}, NOW()
+    )
+  </insert>
+
+  <select id="selectClosureSnapshotsByTeamId" resultType="map">
+    SELECT
+      closure_snapshot_id AS closureSnapshotId,
+      team_id AS teamId,
+      end_type AS endType,
+      CAST(snapshot_json AS CHAR) AS snapshotJson,
+      created_by AS createdBy,
+      created_at AS createdAt
+    FROM team_closure_snapshot
+    WHERE team_id = #{teamId}
+    ORDER BY created_at DESC, closure_snapshot_id DESC
+  </select>
+
+  <select id="selectClosureSnapshotById" resultType="map">
+    SELECT
+      closure_snapshot_id AS closureSnapshotId,
+      team_id AS teamId,
+      end_type AS endType,
+      CAST(snapshot_json AS CHAR) AS snapshotJson,
+      created_by AS createdBy,
+      created_at AS createdAt
+    FROM team_closure_snapshot
+    WHERE closure_snapshot_id = #{closureSnapshotId}
+  </select>
+
+  <select id="selectLatestClosureSnapshotByTeamId" resultType="map">
+    SELECT
+      closure_snapshot_id AS closureSnapshotId,
+      team_id AS teamId,
+      end_type AS endType,
+      CAST(snapshot_json AS CHAR) AS snapshotJson,
+      created_by AS createdBy,
+      created_at AS createdAt
+    FROM team_closure_snapshot
+    WHERE team_id = #{teamId}
+    ORDER BY created_at DESC, closure_snapshot_id DESC
+    LIMIT 1
+  </select>
+</mapper>

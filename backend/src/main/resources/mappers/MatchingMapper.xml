@@ -1,0 +1,676 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.matching.MatchingMapper">
+
+  <sql id="profileColumns">
+    p.profile_id AS profileId,
+    p.user_id AS userId,
+    u.nickname,
+    u.email,
+    p.display_name AS displayName,
+    p.short_intro AS shortIntro,
+    p.detail_intro AS detailIntro,
+    CASE WHEN p.profile_image_path IS NOT NULL THEN CONCAT('/api/media/images/profile/', p.profile_id) ELSE NULL END AS profileImageUrl,
+    p.visibility,
+    p.activity_status AS activityStatus,
+    p.region_id AS regionId,
+    rg.public_display_name AS publicRegionName,
+    rg.sido_name AS sidoName,
+    rg.sigungu_name AS sigunguName,
+    rg.dong_name AS dongName,
+    rg.center_lat AS centerLat,
+    rg.center_lng AS centerLng,
+    p.experience_level AS experienceLevel,
+    p.join_availability AS joinAvailability,
+    p.collaboration_status AS collaborationStatus,
+    p.travel_range AS travelRange,
+    p.preferred_duration AS preferredDuration,
+    p.profile_completed_yn AS profileCompletedYn,
+    p.status AS profileStatus,
+    p.last_active_at AS lastActiveAt,
+    p.updated_at AS updatedAt
+  </sql>
+
+  <sql id="teamColumns">
+    t.team_id AS teamId,
+    t.leader_user_id AS leaderUserId,
+    leader.nickname AS leaderNickname,
+    t.name,
+    t.description,
+    CASE WHEN t.representative_image_path IS NOT NULL THEN CONCAT('/api/media/images/team/', t.team_id) ELSE NULL END AS imageUrl,
+    t.status,
+    t.region_id AS regionId,
+    t.region_any_yn AS regionAnyYn,
+    rg.public_display_name AS publicRegionName,
+    rg.sido_name AS sidoName,
+    rg.sigungu_name AS sigunguName,
+    rg.center_lat AS centerLat,
+    rg.center_lng AS centerLng,
+    t.expected_duration AS expectedDuration,
+    t.max_member_count AS maxMemberCount,
+    t.current_member_count AS currentMemberCount,
+    t.last_active_at AS lastActiveAt
+  </sql>
+
+  <select id="selectProfileByUserId" resultType="map">
+    SELECT <include refid="profileColumns" />
+    FROM member_profile p
+    JOIN user_account u ON u.user_id = p.user_id
+    JOIN region rg ON rg.region_id = p.region_id
+    WHERE p.user_id = #{userId}
+      AND p.status = 'ACTIVE'
+  </select>
+
+  <select id="selectProfileById" resultType="map">
+    SELECT <include refid="profileColumns" />
+    FROM member_profile p
+    JOIN user_account u ON u.user_id = p.user_id
+    JOIN region rg ON rg.region_id = p.region_id
+    WHERE p.profile_id = #{profileId}
+      AND p.status = 'ACTIVE'
+  </select>
+
+  <select id="selectProfileRoles" resultType="map">
+    SELECT
+      r.role_id AS roleId,
+      r.name AS roleName,
+      rc.role_category_id AS roleCategoryId,
+      rc.name AS roleCategoryName
+    FROM profile_role pr
+    JOIN `role` r ON r.role_id = pr.role_id
+    JOIN role_category rc ON rc.role_category_id = r.role_category_id
+    WHERE pr.profile_id = #{profileId}
+    ORDER BY rc.sort_order, r.sort_order
+  </select>
+
+  <select id="selectProfileGenres" resultType="map">
+    SELECT g.genre_id AS genreId, g.name
+    FROM profile_genre pg
+    JOIN genre g ON g.genre_id = pg.genre_id
+    WHERE pg.profile_id = #{profileId}
+    ORDER BY g.sort_order
+  </select>
+
+  <select id="selectProfileConditions" resultType="map">
+    SELECT
+      pcc.condition_code AS conditionCode,
+      COALESCE(c.display_name, pcc.condition_code) AS displayName
+    FROM profile_collaboration_condition pcc
+    LEFT JOIN common_code c
+      ON c.code_group = 'COLLABORATION_CONDITION'
+     AND c.code = pcc.condition_code
+    WHERE pcc.profile_id = #{profileId}
+    ORDER BY c.sort_order, pcc.condition_code
+  </select>
+
+  <select id="selectTeamById" resultType="map">
+    SELECT <include refid="teamColumns" />
+    FROM team t
+    JOIN user_account leader ON leader.user_id = t.leader_user_id
+    LEFT JOIN region rg ON rg.region_id = t.region_id
+    WHERE t.team_id = #{teamId}
+      AND t.status != 'DELETED'
+  </select>
+
+  <select id="selectTeamGenres" resultType="map">
+    SELECT g.genre_id AS genreId, g.name
+    FROM team_genre tg
+    JOIN genre g ON g.genre_id = tg.genre_id
+    WHERE tg.team_id = #{teamId}
+    ORDER BY g.sort_order
+  </select>
+
+  <select id="selectSlotById" resultType="map">
+    SELECT
+      s.slot_id AS slotId,
+      s.recruitment_id AS recruitmentId,
+      tr.team_id AS teamId,
+      tr.title AS recruitmentTitle,
+      tr.status AS recruitmentStatus,
+      tr.work_start_at AS workStartAt,
+      s.role_id AS roleId,
+      r.name AS roleName,
+      s.required_count AS requiredCount,
+      s.accepted_count AS acceptedCount,
+      s.required_count - s.accepted_count AS remainingCount,
+      s.required_experience_level AS requiredExperienceLevel,
+      s.collaboration_condition AS collaborationCondition,
+      s.role_duration AS roleDuration,
+      s.status AS slotStatus
+    FROM team_recruitment_slot s
+    JOIN team_recruitment tr ON tr.recruitment_id = s.recruitment_id
+    JOIN `role` r ON r.role_id = s.role_id
+    WHERE s.slot_id = #{slotId}
+      AND s.status != 'DELETED'
+      AND tr.status != 'DELETED'
+  </select>
+
+  <select id="selectCandidateProfiles" resultType="map">
+    SELECT
+      <include refid="profileColumns" />,
+      <choose>
+        <when test="currentUserId != null">
+          EXISTS (
+            SELECT 1
+            FROM user_follow uf
+            WHERE uf.follower_user_id = #{currentUserId}
+              AND uf.following_user_id = p.user_id
+          )
+        </when>
+        <otherwise>FALSE</otherwise>
+      </choose> AS followingByCurrentUser,
+      <choose>
+        <when test="teamId != null and slotId != null">
+          EXISTS (
+            SELECT 1
+            FROM team_invitation ti
+            WHERE ti.team_id = #{teamId}
+              AND ti.slot_id = #{slotId}
+              AND ti.target_user_id = p.user_id
+              AND ti.status = 'PENDING'
+          )
+        </when>
+        <otherwise>FALSE</otherwise>
+      </choose> AS invitedByCurrentUser,
+      <choose>
+        <when test="teamId != null and slotId != null">
+          (
+            SELECT ti.invitation_id
+            FROM team_invitation ti
+            WHERE ti.team_id = #{teamId}
+              AND ti.slot_id = #{slotId}
+              AND ti.target_user_id = p.user_id
+              AND ti.status = 'PENDING'
+            ORDER BY ti.created_at DESC, ti.invitation_id DESC
+            LIMIT 1
+          )
+        </when>
+        <otherwise>NULL</otherwise>
+      </choose> AS invitationId
+    FROM member_profile p
+    JOIN user_account u ON u.user_id = p.user_id
+    JOIN region rg ON rg.region_id = p.region_id
+    WHERE p.profile_completed_yn = 'Y'
+      AND p.status = 'ACTIVE'
+      AND p.activity_status = 'VISIBLE'
+      AND p.visibility IN ('PUBLIC', 'COMPANY')
+      AND u.account_status = 'ACTIVE'
+      <if test="currentUserId != null">
+        AND p.user_id != #{currentUserId}
+      </if>
+      <if test="teamId != null">
+        AND NOT EXISTS (
+          SELECT 1 FROM team_member tm
+          WHERE tm.team_id = #{teamId}
+            AND tm.user_id = p.user_id
+            AND tm.status = 'ACTIVE'
+        )
+      </if>
+    ORDER BY p.updated_at DESC, p.profile_id DESC
+  </select>
+
+  <select id="selectProfilePortfolioItems" resultType="map">
+    SELECT
+      pi.portfolio_item_id AS portfolioItemId,
+      pi.profile_id AS profileId,
+      pi.public_data_sync_item_id AS publicDataSyncItemId,
+      pi.title,
+      pi.role_name AS roleName,
+      pi.credit_name AS creditName,
+      pi.description,
+      pi.source_type AS sourceType,
+      pi.external_source_name AS externalSourceName,
+      pi.external_reference_id AS externalReferenceId,
+      pi.url,
+      pi.thumbnail_url AS thumbnailUrl,
+      CASE WHEN pi.thumbnail_image_path IS NOT NULL THEN CONCAT('/api/media/images/portfolio/', pi.portfolio_item_id) ELSE NULL END AS uploadedThumbnailUrl,
+      pi.sort_order AS sortOrder,
+      pi.status,
+      pi.created_at AS createdAt,
+      pi.updated_at AS updatedAt,
+      CASE WHEN pv.verification_status = 'VERIFIED' THEN TRUE ELSE FALSE END AS verified,
+      pv.provider AS verificationProvider,
+      pv.provider_movie_title AS providerMovieTitle,
+      pv.provider_movie_title_en AS providerMovieTitleEn,
+      pv.provider_movie_year AS providerMovieYear,
+      pv.provider_open_date AS providerOpenDate,
+      pv.provider_genres AS providerGenres,
+      pv.provider_person_name AS providerPersonName,
+      pv.provider_role_name AS providerRoleName,
+      pv.provider_role_name AS matchedRoleName,
+      pv.matched_role_group AS matchedRoleGroup,
+      pv.matched_source AS matchedSource
+    FROM portfolio_item pi
+    LEFT JOIN portfolio_verification pv ON pv.portfolio_item_id = pi.portfolio_item_id
+    WHERE pi.profile_id = #{profileId}
+      AND pi.status = 'ACTIVE'
+    ORDER BY pi.sort_order ASC, pi.created_at DESC
+  </select>
+
+  <select id="selectOpenRecruitmentSlots" resultType="map">
+    SELECT
+      t.team_id AS teamId,
+      t.name AS teamName,
+      t.description AS teamDescription,
+      CASE WHEN t.representative_image_path IS NOT NULL THEN CONCAT('/api/media/images/team/', t.team_id) ELSE NULL END AS imageUrl,
+      t.status AS teamStatus,
+      t.region_id AS regionId,
+      t.region_any_yn AS regionAnyYn,
+      rg.public_display_name AS publicRegionName,
+      rg.sido_name AS sidoName,
+      rg.sigungu_name AS sigunguName,
+      rg.center_lat AS centerLat,
+      rg.center_lng AS centerLng,
+      t.expected_duration AS expectedDuration,
+      t.max_member_count AS maxMemberCount,
+      t.current_member_count AS currentMemberCount,
+      tr.recruitment_id AS recruitmentId,
+      tr.title AS recruitmentTitle,
+      tr.deadline_at AS deadlineAt,
+      tr.work_start_at AS workStartAt,
+      s.slot_id AS slotId,
+      s.role_id AS roleId,
+      r.name AS roleName,
+      s.required_count AS requiredCount,
+      s.accepted_count AS acceptedCount,
+      s.required_count - s.accepted_count AS remainingCount,
+      s.required_experience_level AS requiredExperienceLevel,
+      s.collaboration_condition AS collaborationCondition,
+      s.role_duration AS roleDuration,
+      s.status AS slotStatus,
+      <choose>
+        <when test="userId != null">
+          EXISTS (
+            SELECT 1
+            FROM matching_bookmark mb
+            WHERE mb.user_id = #{userId}
+              AND mb.target_type = 'TEAM'
+              AND mb.target_id = t.team_id
+          )
+        </when>
+        <otherwise>FALSE</otherwise>
+      </choose> AS savedByCurrentUser,
+      <choose>
+        <when test="userId != null">
+          EXISTS (
+            SELECT 1
+            FROM team_application ta
+            WHERE ta.team_id = t.team_id
+              AND ta.slot_id = s.slot_id
+              AND ta.applicant_user_id = #{userId}
+              AND ta.status = 'PENDING'
+          )
+        </when>
+        <otherwise>FALSE</otherwise>
+      </choose> AS appliedByCurrentUser,
+      <choose>
+        <when test="userId != null">
+          (
+            SELECT ta.application_id
+            FROM team_application ta
+            WHERE ta.team_id = t.team_id
+              AND ta.slot_id = s.slot_id
+              AND ta.applicant_user_id = #{userId}
+              AND ta.status = 'PENDING'
+            ORDER BY ta.created_at DESC, ta.application_id DESC
+            LIMIT 1
+          )
+        </when>
+        <otherwise>NULL</otherwise>
+      </choose> AS applicationId
+    FROM team_recruitment_slot s
+    JOIN team_recruitment tr ON tr.recruitment_id = s.recruitment_id
+    JOIN team t ON t.team_id = tr.team_id
+    JOIN `role` r ON r.role_id = s.role_id
+    LEFT JOIN region rg ON rg.region_id = t.region_id
+    WHERE t.status IN ('RECRUITING', 'IN_PROGRESS')
+      AND tr.status = 'OPEN'
+      AND s.status = 'OPEN'
+      AND s.required_count > s.accepted_count
+    ORDER BY tr.created_at DESC, s.slot_id
+  </select>
+
+  <select id="existsActiveTeamMember" resultType="boolean">
+    SELECT EXISTS (
+      SELECT 1 FROM team_member
+      WHERE team_id = #{teamId}
+        AND user_id = #{userId}
+        AND status = 'ACTIVE'
+    )
+  </select>
+
+  <select id="selectActiveTeamRole" resultType="string">
+    SELECT team_role
+    FROM team_member
+    WHERE team_id = #{teamId}
+      AND user_id = #{userId}
+      AND status = 'ACTIVE'
+    LIMIT 1
+  </select>
+
+  <select id="selectActiveScorePolicy" resultType="map">
+    SELECT
+      policy_id AS policyId,
+      policy_name AS policyName,
+      status,
+      version,
+      description,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM matching_score_policy
+    WHERE status = 'ACTIVE'
+    ORDER BY version DESC, policy_id DESC
+    LIMIT 1
+  </select>
+
+  <select id="selectScorePolicyItems" resultType="map">
+    SELECT
+      policy_item_id AS policyItemId,
+      policy_id AS policyId,
+      score_group AS scoreGroup,
+      element_code AS elementCode,
+      display_name AS displayName,
+      weight,
+      sort_order AS sortOrder
+    FROM matching_score_policy_item
+    WHERE policy_id = #{policyId}
+      AND active_yn = 'Y'
+    ORDER BY score_group, sort_order
+  </select>
+
+  <insert id="insertBookmark">
+    INSERT IGNORE INTO matching_bookmark (user_id, target_type, target_id, created_at)
+    VALUES (#{userId}, #{targetType}, #{targetId}, NOW())
+  </insert>
+
+  <select id="selectTeamBookmarks" resultType="map">
+    SELECT
+      mb.bookmark_id AS bookmarkId,
+      mb.created_at AS savedAt,
+      t.team_id AS teamId,
+      t.name AS teamName,
+      t.description AS teamDescription,
+      t.status AS teamStatus,
+      t.region_id AS regionId,
+      t.region_any_yn AS regionAnyYn,
+      rg.public_display_name AS publicRegionName,
+      t.expected_duration AS expectedDuration,
+      t.max_member_count AS maxMemberCount,
+      t.current_member_count AS currentMemberCount
+    FROM matching_bookmark mb
+    JOIN team t ON t.team_id = mb.target_id
+    LEFT JOIN region rg ON rg.region_id = t.region_id
+    WHERE mb.user_id = #{userId}
+      AND mb.target_type = 'TEAM'
+    ORDER BY mb.created_at DESC, mb.bookmark_id DESC
+  </select>
+
+  <select id="selectOpenRecruitmentSlotsByTeamId" resultType="map">
+    SELECT
+      tr.recruitment_id AS recruitmentId,
+      tr.title AS recruitmentTitle,
+      tr.deadline_at AS deadlineAt,
+      tr.work_start_at AS workStartAt,
+      s.slot_id AS slotId,
+      s.role_id AS roleId,
+      r.name AS roleName,
+      s.required_count AS requiredCount,
+      s.accepted_count AS acceptedCount,
+      s.required_count - s.accepted_count AS remainingCount,
+      s.required_experience_level AS requiredExperienceLevel,
+      s.collaboration_condition AS collaborationCondition,
+      s.role_duration AS roleDuration,
+      <choose>
+        <when test="userId != null">
+          EXISTS (
+            SELECT 1
+            FROM team_application ta
+            WHERE ta.team_id = t.team_id
+              AND ta.slot_id = s.slot_id
+              AND ta.applicant_user_id = #{userId}
+              AND ta.status = 'PENDING'
+          )
+        </when>
+        <otherwise>FALSE</otherwise>
+      </choose> AS appliedByCurrentUser,
+      <choose>
+        <when test="userId != null">
+          (
+            SELECT ta.application_id
+            FROM team_application ta
+            WHERE ta.team_id = t.team_id
+              AND ta.slot_id = s.slot_id
+              AND ta.applicant_user_id = #{userId}
+              AND ta.status = 'PENDING'
+            ORDER BY ta.created_at DESC, ta.application_id DESC
+            LIMIT 1
+          )
+        </when>
+        <otherwise>NULL</otherwise>
+      </choose> AS applicationId
+    FROM team_recruitment_slot s
+    JOIN team_recruitment tr ON tr.recruitment_id = s.recruitment_id
+    JOIN team t ON t.team_id = tr.team_id
+    JOIN `role` r ON r.role_id = s.role_id
+    WHERE t.team_id = #{teamId}
+      AND t.status IN ('RECRUITING', 'IN_PROGRESS')
+      AND tr.status = 'OPEN'
+      AND s.status = 'OPEN'
+      AND s.required_count > s.accepted_count
+    ORDER BY tr.created_at DESC, s.slot_id
+  </select>
+
+  <delete id="deleteBookmark">
+    DELETE FROM matching_bookmark
+    WHERE user_id = #{userId}
+      AND target_type = #{targetType}
+      AND target_id = #{targetId}
+  </delete>
+
+  <select id="countPendingInvitation" resultType="int">
+    SELECT COUNT(*)
+    FROM team_invitation
+    WHERE team_id = #{teamId}
+      AND slot_id = #{slotId}
+      AND target_user_id = #{targetUserId}
+      AND status = 'PENDING'
+  </select>
+
+  <insert id="insertInvitation">
+    INSERT INTO team_invitation (team_id, recruitment_id, slot_id, target_user_id, inviter_user_id, message, status, created_at)
+    VALUES (#{teamId}, #{recruitmentId}, #{slotId}, #{targetUserId}, #{inviterUserId}, #{message}, 'PENDING', NOW())
+    ON DUPLICATE KEY UPDATE invitation_id = invitation_id
+  </insert>
+
+  <select id="selectPendingInvitation" resultType="map">
+    SELECT
+      ti.invitation_id AS invitationId,
+      ti.team_id AS teamId,
+      t.name AS teamName,
+      ti.recruitment_id AS recruitmentId,
+      tr.title AS recruitmentTitle,
+      ti.slot_id AS slotId,
+      r.name AS roleName,
+      ti.target_user_id AS targetUserId,
+      target.nickname AS targetNickname,
+      mp.profile_id AS targetProfileId,
+      mp.display_name AS targetDisplayName,
+      rg.public_display_name AS publicRegionName,
+      ti.inviter_user_id AS inviterUserId,
+      ti.message,
+      ti.status,
+      ti.created_at AS createdAt
+    FROM team_invitation ti
+    JOIN team t ON t.team_id = ti.team_id
+    JOIN team_recruitment tr ON tr.recruitment_id = ti.recruitment_id
+    JOIN team_recruitment_slot s ON s.slot_id = ti.slot_id
+    JOIN `role` r ON r.role_id = s.role_id
+    JOIN user_account target ON target.user_id = ti.target_user_id
+    LEFT JOIN member_profile mp
+      ON mp.user_id = ti.target_user_id
+     AND mp.status = 'ACTIVE'
+    LEFT JOIN region rg ON rg.region_id = mp.region_id
+    WHERE ti.team_id = #{teamId}
+      AND ti.slot_id = #{slotId}
+      AND ti.target_user_id = #{targetUserId}
+      AND ti.status = 'PENDING'
+    ORDER BY ti.created_at DESC, ti.invitation_id DESC
+    LIMIT 1
+  </select>
+
+  <select id="selectSentInvitations" resultType="map">
+    SELECT
+      ti.invitation_id AS invitationId,
+      ti.team_id AS teamId,
+      t.name AS teamName,
+      ti.recruitment_id AS recruitmentId,
+      tr.title AS recruitmentTitle,
+      ti.slot_id AS slotId,
+      r.name AS roleName,
+      ti.target_user_id AS targetUserId,
+      target.nickname AS targetNickname,
+      mp.profile_id AS targetProfileId,
+      mp.display_name AS targetDisplayName,
+      CASE WHEN mp.profile_image_path IS NOT NULL THEN CONCAT('/api/media/images/profile/', mp.profile_id) ELSE NULL END AS profileImageUrl,
+      rg.public_display_name AS publicRegionName,
+      ti.message,
+      ti.status,
+      ti.decided_at AS decidedAt,
+      ti.created_at AS createdAt
+    FROM team_invitation ti
+    JOIN team t ON t.team_id = ti.team_id
+    JOIN team_recruitment tr ON tr.recruitment_id = ti.recruitment_id
+    JOIN team_recruitment_slot s ON s.slot_id = ti.slot_id
+    JOIN `role` r ON r.role_id = s.role_id
+    JOIN user_account target ON target.user_id = ti.target_user_id
+    LEFT JOIN member_profile mp
+      ON mp.user_id = ti.target_user_id
+     AND mp.status = 'ACTIVE'
+    LEFT JOIN region rg ON rg.region_id = mp.region_id
+    WHERE ti.inviter_user_id = #{userId}
+    ORDER BY FIELD(ti.status, 'PENDING', 'ACCEPTED', 'REJECTED', 'CANCELED', 'EXPIRED'), ti.created_at DESC
+  </select>
+
+  <select id="selectInvitationById" resultType="map">
+    SELECT
+      invitation_id AS invitationId,
+      team_id AS teamId,
+      recruitment_id AS recruitmentId,
+      slot_id AS slotId,
+      target_user_id AS targetUserId,
+      inviter_user_id AS inviterUserId,
+      status,
+      created_at AS createdAt
+    FROM team_invitation
+    WHERE invitation_id = #{invitationId}
+  </select>
+
+  <update id="cancelPendingInvitation">
+    UPDATE team_invitation
+    SET status = 'CANCELED',
+        updated_at = NOW()
+    WHERE invitation_id = #{invitationId}
+      AND status = 'PENDING'
+  </update>
+
+  <select id="countPendingApplication" resultType="int">
+    SELECT COUNT(*)
+    FROM team_application
+    WHERE team_id = #{teamId}
+      AND slot_id = #{slotId}
+      AND applicant_user_id = #{applicantUserId}
+      AND status = 'PENDING'
+  </select>
+
+  <insert id="insertApplication">
+    INSERT INTO team_application (team_id, recruitment_id, slot_id, applicant_user_id, message, status, created_at)
+    VALUES (#{teamId}, #{recruitmentId}, #{slotId}, #{applicantUserId}, #{message}, 'PENDING', NOW())
+    ON DUPLICATE KEY UPDATE application_id = application_id
+  </insert>
+
+  <select id="selectPendingApplication" resultType="map">
+    SELECT
+      ta.application_id AS applicationId,
+      ta.team_id AS teamId,
+      t.name AS teamName,
+      t.description AS teamDescription,
+      ta.recruitment_id AS recruitmentId,
+      tr.title AS recruitmentTitle,
+      ta.slot_id AS slotId,
+      r.name AS roleName,
+      ta.applicant_user_id AS applicantUserId,
+      ta.message,
+      ta.status,
+      ta.created_at AS createdAt
+    FROM team_application ta
+    JOIN team t ON t.team_id = ta.team_id
+    JOIN team_recruitment tr ON tr.recruitment_id = ta.recruitment_id
+    JOIN team_recruitment_slot s ON s.slot_id = ta.slot_id
+    JOIN `role` r ON r.role_id = s.role_id
+    WHERE ta.team_id = #{teamId}
+      AND ta.slot_id = #{slotId}
+      AND ta.applicant_user_id = #{applicantUserId}
+      AND ta.status = 'PENDING'
+    ORDER BY ta.created_at DESC, ta.application_id DESC
+    LIMIT 1
+  </select>
+
+  <select id="selectSentApplications" resultType="map">
+    SELECT
+      ta.application_id AS applicationId,
+      ta.team_id AS teamId,
+      t.name AS teamName,
+      t.description AS teamDescription,
+      CASE WHEN t.representative_image_path IS NOT NULL THEN CONCAT('/api/media/images/team/', t.team_id) ELSE NULL END AS imageUrl,
+      t.status AS teamStatus,
+      t.region_any_yn AS regionAnyYn,
+      rg.public_display_name AS publicRegionName,
+      ta.recruitment_id AS recruitmentId,
+      tr.title AS recruitmentTitle,
+      ta.slot_id AS slotId,
+      r.name AS roleName,
+      ta.message,
+      ta.status,
+      ta.reject_reason AS rejectReason,
+      ta.decided_at AS decidedAt,
+      ta.created_at AS createdAt
+    FROM team_application ta
+    JOIN team t ON t.team_id = ta.team_id
+    JOIN team_recruitment tr ON tr.recruitment_id = ta.recruitment_id
+    JOIN team_recruitment_slot s ON s.slot_id = ta.slot_id
+    JOIN `role` r ON r.role_id = s.role_id
+    LEFT JOIN region rg ON rg.region_id = t.region_id
+    WHERE ta.applicant_user_id = #{userId}
+    ORDER BY FIELD(ta.status, 'PENDING', 'ACCEPTED', 'REJECTED', 'CANCELED', 'EXPIRED'), ta.created_at DESC
+  </select>
+
+  <select id="selectApplicationById" resultType="map">
+    SELECT
+      application_id AS applicationId,
+      team_id AS teamId,
+      recruitment_id AS recruitmentId,
+      slot_id AS slotId,
+      applicant_user_id AS applicantUserId,
+      status,
+      created_at AS createdAt
+    FROM team_application
+    WHERE application_id = #{applicationId}
+  </select>
+
+  <update id="cancelPendingApplication">
+    UPDATE team_application
+    SET status = 'CANCELED',
+        reject_reason = NULL,
+        updated_at = NOW()
+    WHERE application_id = #{applicationId}
+      AND status = 'PENDING'
+  </update>
+
+  <insert id="insertActionLog">
+    INSERT INTO matching_action_log (actor_user_id, action_type, target_type, target_id, team_id, role_id, created_at)
+    VALUES (#{actorUserId}, #{actionType}, #{targetType}, #{targetId}, #{teamId}, #{roleId}, NOW())
+  </insert>
+</mapper>

@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.notifications.NotificationMapper">
+
+  <select id="selectNotifications" resultType="map">
+    SELECT
+      n.notification_id AS notificationId,
+      n.batch_id AS batchId,
+      n.recipient_user_id AS recipientUserId,
+      n.sender_user_id AS senderUserId,
+      sender.nickname AS senderNickname,
+      n.notification_type AS notificationType,
+      n.title,
+      n.body,
+      n.target_type AS targetType,
+      n.target_id AS targetId,
+      n.read_yn AS readYn,
+      n.hidden_yn AS hiddenYn,
+      n.created_at AS createdAt,
+      n.read_at AS readAt,
+      n.expires_at AS expiresAt
+    FROM notification n
+    LEFT JOIN user_account sender ON sender.user_id = n.sender_user_id
+    WHERE n.recipient_user_id = #{userId}
+      AND n.hidden_yn = 'N'
+      AND n.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      AND (n.expires_at IS NULL OR n.expires_at >= NOW())
+      <if test="unreadOnly">
+        AND n.read_yn = 'N'
+      </if>
+    ORDER BY n.created_at DESC, n.notification_id DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="countUnread" resultType="int">
+    SELECT COUNT(*)
+    FROM notification n
+    WHERE n.recipient_user_id = #{userId}
+      AND n.hidden_yn = 'N'
+      AND n.read_yn = 'N'
+      AND n.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      AND (n.expires_at IS NULL OR n.expires_at >= NOW())
+  </select>
+
+  <update id="markRead">
+    UPDATE notification
+    SET read_yn = 'Y',
+        read_at = COALESCE(read_at, NOW())
+    WHERE notification_id = #{notificationId}
+      AND recipient_user_id = #{userId}
+  </update>
+
+  <update id="markAllRead">
+    UPDATE notification
+    SET read_yn = 'Y',
+        read_at = COALESCE(read_at, NOW())
+    WHERE recipient_user_id = #{userId}
+      AND hidden_yn = 'N'
+      AND read_yn = 'N'
+      AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      AND (expires_at IS NULL OR expires_at >= NOW())
+  </update>
+
+  <update id="hide">
+    UPDATE notification
+    SET hidden_yn = 'Y'
+    WHERE notification_id = #{notificationId}
+      AND recipient_user_id = #{userId}
+  </update>
+
+  <insert id="insertNotification" parameterType="map" useGeneratedKeys="true" keyProperty="notificationId">
+    INSERT INTO notification (
+      batch_id, recipient_user_id, sender_user_id, notification_type, title, body,
+      target_type, target_id, read_yn, hidden_yn, created_at, expires_at
+    ) VALUES (
+      #{batchId,jdbcType=BIGINT}, #{recipientUserId}, #{senderUserId}, #{notificationType}, #{title}, #{body},
+      #{targetType}, #{targetId}, 'N', 'N', NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY)
+    )
+  </insert>
+
+  <insert id="insertNotifications">
+    INSERT INTO notification (
+      batch_id, recipient_user_id, sender_user_id, notification_type, title, body,
+      target_type, target_id, read_yn, hidden_yn, created_at, expires_at
+    ) VALUES
+    <foreach collection="notifications" item="notification" separator=",">
+      (
+        #{notification.batchId,jdbcType=BIGINT}, #{notification.recipientUserId}, #{notification.senderUserId},
+        #{notification.notificationType}, #{notification.title}, #{notification.body},
+        #{notification.targetType,jdbcType=VARCHAR}, #{notification.targetId,jdbcType=BIGINT},
+        'N', 'N', NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY)
+      )
+    </foreach>
+  </insert>
+
+  <select id="selectTemplates" resultType="map">
+    SELECT
+      template_id AS templateId,
+      template_code AS templateCode,
+      display_name AS displayName,
+      notification_type AS notificationType,
+      target_type AS targetType,
+      title_template AS titleTemplate,
+      body_template AS bodyTemplate,
+      active_yn AS activeYn,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM notification_template
+    WHERE active_yn = 'Y'
+    ORDER BY display_name, template_id
+  </select>
+
+  <select id="selectTemplateById" resultType="map">
+    SELECT
+      template_id AS templateId,
+      template_code AS templateCode,
+      display_name AS displayName,
+      notification_type AS notificationType,
+      target_type AS targetType,
+      title_template AS titleTemplate,
+      body_template AS bodyTemplate,
+      active_yn AS activeYn
+    FROM notification_template
+    WHERE template_id = #{templateId}
+      AND active_yn = 'Y'
+  </select>
+
+  <insert id="insertDeliveryBatch" parameterType="map" useGeneratedKeys="true" keyProperty="batchId">
+    INSERT INTO notification_delivery_batch (
+      sender_user_id, template_id, target_scope, account_type, team_id,
+      recipient_count, sent_count, chunk_count, status,
+      title, body, notification_type, target_type, target_id, context_json, created_at
+    ) VALUES (
+      #{senderUserId}, #{templateId,jdbcType=BIGINT}, #{targetScope}, #{accountType,jdbcType=VARCHAR}, #{teamId,jdbcType=BIGINT},
+      #{recipientCount}, 0, 0, 'PENDING',
+      #{title}, #{body}, #{notificationType}, #{targetType,jdbcType=VARCHAR}, #{targetId,jdbcType=BIGINT},
+      #{contextJson,jdbcType=VARCHAR}, NOW()
+    )
+  </insert>
+
+  <update id="completeDeliveryBatch">
+    UPDATE notification_delivery_batch
+    SET sent_count = #{sentCount},
+        chunk_count = #{chunkCount},
+        status = 'COMPLETED',
+        completed_at = NOW()
+    WHERE batch_id = #{batchId}
+  </update>
+
+  <select id="selectDeliveryBatches" resultType="map">
+    SELECT
+      b.batch_id AS batchId,
+      b.sender_user_id AS senderUserId,
+      sender.nickname AS senderNickname,
+      b.template_id AS templateId,
+      t.template_code AS templateCode,
+      t.display_name AS templateName,
+      b.target_scope AS targetScope,
+      b.account_type AS accountType,
+      b.team_id AS teamId,
+      team.name AS teamName,
+      b.recipient_count AS recipientCount,
+      b.sent_count AS sentCount,
+      b.chunk_count AS chunkCount,
+      b.status,
+      b.title,
+      b.notification_type AS notificationType,
+      b.target_type AS targetType,
+      b.target_id AS targetId,
+      CAST(b.context_json AS CHAR) AS contextJson,
+      b.created_at AS createdAt,
+      b.completed_at AS completedAt
+    FROM notification_delivery_batch b
+    LEFT JOIN user_account sender ON sender.user_id = b.sender_user_id
+    LEFT JOIN notification_template t ON t.template_id = b.template_id
+    LEFT JOIN team ON team.team_id = b.team_id
+    ORDER BY b.created_at DESC, b.batch_id DESC
+    LIMIT #{limit}
+  </select>
+
+  <select id="selectRecipientsAll" resultType="long">
+    SELECT user_id
+    FROM user_account
+    WHERE account_status IN ('ACTIVE', 'PENDING_APPROVAL')
+    ORDER BY user_id
+  </select>
+
+  <select id="selectRecipientsByAccountType" resultType="long">
+    SELECT user_id
+    FROM user_account
+    WHERE account_type = #{accountType}
+      AND account_status IN ('ACTIVE', 'PENDING_APPROVAL')
+    ORDER BY user_id
+  </select>
+
+  <select id="selectRecipientsByUserIds" resultType="long">
+    SELECT user_id
+    FROM user_account
+    WHERE account_status IN ('ACTIVE', 'PENDING_APPROVAL')
+      <choose>
+        <when test="userIds != null and userIds.size() > 0">
+          AND user_id IN
+          <foreach collection="userIds" item="userId" open="(" separator="," close=")">
+            #{userId}
+          </foreach>
+        </when>
+        <otherwise>
+          AND 1 = 0
+        </otherwise>
+      </choose>
+    ORDER BY user_id
+  </select>
+
+  <select id="selectRecipientsByTeamId" resultType="long">
+    SELECT user_id
+    FROM team_member
+    WHERE team_id = #{teamId}
+      AND status = 'ACTIVE'
+    ORDER BY FIELD(team_role, 'LEADER', 'SUB_LEADER', 'MEMBER'), joined_at
+  </select>
+
+  <select id="selectTeamManagers" resultType="long">
+    SELECT user_id
+    FROM team_member
+    WHERE team_id = #{teamId}
+      AND status = 'ACTIVE'
+      AND team_role IN ('LEADER', 'SUB_LEADER')
+    ORDER BY FIELD(team_role, 'LEADER', 'SUB_LEADER'), joined_at
+  </select>
+</mapper>

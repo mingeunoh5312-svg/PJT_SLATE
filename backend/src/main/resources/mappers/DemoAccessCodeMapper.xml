@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.slate.security.DemoAccessCodeMapper">
+
+  <sql id="adminCodeColumns">
+    c.code_id AS codeId,
+    c.label,
+    c.status,
+    c.starts_at AS startsAt,
+    c.expires_at AS expiresAt,
+    c.max_uses AS maxUses,
+    c.used_count AS usedCount,
+    c.last_used_at AS lastUsedAt,
+    c.created_by AS createdBy,
+    creator.email AS createdByEmail,
+    creator.nickname AS createdByNickname,
+    c.created_at AS createdAt,
+    c.updated_by AS updatedBy,
+    updater.email AS updatedByEmail,
+    updater.nickname AS updatedByNickname,
+    c.updated_at AS updatedAt,
+    c.revoked_by AS revokedBy,
+    revoker.email AS revokedByEmail,
+    revoker.nickname AS revokedByNickname,
+    c.revoked_at AS revokedAt,
+    c.revoke_reason AS revokeReason
+  </sql>
+
+  <select id="selectAdminCodes" resultType="map">
+    SELECT
+      <include refid="adminCodeColumns"/>
+    FROM demo_access_code c
+    LEFT JOIN user_account creator ON creator.user_id = c.created_by
+    LEFT JOIN user_account updater ON updater.user_id = c.updated_by
+    LEFT JOIN user_account revoker ON revoker.user_id = c.revoked_by
+    ORDER BY c.created_at DESC, c.code_id DESC
+  </select>
+
+  <select id="selectAdminCodeById" resultType="map">
+    SELECT
+      <include refid="adminCodeColumns"/>
+    FROM demo_access_code c
+    LEFT JOIN user_account creator ON creator.user_id = c.created_by
+    LEFT JOIN user_account updater ON updater.user_id = c.updated_by
+    LEFT JOIN user_account revoker ON revoker.user_id = c.revoked_by
+    WHERE c.code_id = #{codeId}
+  </select>
+
+  <select id="selectVerificationCandidates" resultType="map">
+    SELECT
+      code_id AS codeId,
+      code_hash AS codeHash
+    FROM demo_access_code
+    WHERE code_fingerprint = #{fingerprint}
+      AND status = 'ACTIVE'
+      AND (starts_at IS NULL OR starts_at &lt;= NOW())
+      AND expires_at &gt; NOW()
+      AND (max_uses IS NULL OR used_count &lt; max_uses)
+    ORDER BY code_id DESC
+    LIMIT 5
+  </select>
+
+  <select id="selectRequestCandidates" resultType="map">
+    SELECT
+      code_id AS codeId,
+      code_hash AS codeHash
+    FROM demo_access_code
+    WHERE code_fingerprint = #{fingerprint}
+      AND status = 'ACTIVE'
+      AND (starts_at IS NULL OR starts_at &lt;= NOW())
+      AND expires_at &gt; NOW()
+    ORDER BY code_id DESC
+    LIMIT 5
+  </select>
+
+  <insert id="insertCode" parameterType="map" useGeneratedKeys="true" keyProperty="codeId">
+    INSERT INTO demo_access_code (
+      label, code_hash, code_fingerprint, status, starts_at, expires_at, max_uses, created_by
+    ) VALUES (
+      #{label}, #{codeHash}, #{codeFingerprint,jdbcType=VARCHAR}, 'ACTIVE',
+      #{startsAt,jdbcType=TIMESTAMP}, #{expiresAt}, #{maxUses,jdbcType=INTEGER}, #{createdBy,jdbcType=BIGINT}
+    )
+  </insert>
+
+  <update id="updateCode" parameterType="map">
+    UPDATE demo_access_code
+    SET label = #{label},
+        starts_at = #{startsAt,jdbcType=TIMESTAMP},
+        expires_at = #{expiresAt},
+        max_uses = #{maxUses,jdbcType=INTEGER},
+        updated_by = #{updatedBy,jdbcType=BIGINT},
+        updated_at = NOW()
+    WHERE code_id = #{codeId}
+  </update>
+
+  <update id="revokeCode">
+    UPDATE demo_access_code
+    SET status = 'REVOKED',
+        revoked_by = #{revokedBy,jdbcType=BIGINT},
+        revoked_at = NOW(),
+        revoke_reason = #{reason,jdbcType=VARCHAR},
+        updated_by = #{revokedBy,jdbcType=BIGINT},
+        updated_at = NOW()
+    WHERE code_id = #{codeId}
+  </update>
+
+  <update id="incrementUse">
+    UPDATE demo_access_code
+    SET used_count = used_count + 1,
+        last_used_at = NOW(),
+        updated_at = NOW()
+    WHERE code_id = #{codeId}
+      AND status = 'ACTIVE'
+      AND (starts_at IS NULL OR starts_at &lt;= NOW())
+      AND expires_at &gt; NOW()
+      AND (max_uses IS NULL OR used_count &lt; max_uses)
+  </update>
+</mapper>
