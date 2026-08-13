@@ -17,6 +17,8 @@
 ![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vuedotjs&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
 
+**한국어** · [English](README.en.md)
+
 </div>
 
 ---
@@ -207,3 +209,4 @@ npm run dev                   # http://localhost:5174
 
 SSAFY 공통(관통) 프로젝트 결과물. MVP는 `prototype_3` 기준으로 제작했다.
 공개용으로 실제 시크릿·운영 값·대용량 원본 데이터는 저장소에서 제외했다.
+라이선스: [MIT](LICENSE).
